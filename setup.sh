@@ -97,7 +97,6 @@ create_event_service() {
     
     # Créer les répertoires nécessaires
     mkdir -p src/main/{java/com/fst/dmi/eventservice/{controller,service,model,repository,config},resources}
-    mkdir -p gradle
     
     # build.gradle
     cat > build.gradle << 'EOF'
@@ -127,6 +126,16 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+EOF
+
+    # settings.gradle
+    echo "rootProject.name = 'event-service'" > settings.gradle
+
+    # gradle.properties
+    cat > gradle.properties << 'EOF'
+org.gradle.daemon=false
+org.gradle.parallel=true
+org.gradle.caching=true
 EOF
 
     # Configuration
@@ -291,7 +300,7 @@ public class Event {
         return false; // Placeholder - à remplacer
     }
 
-    // Getters et setters (générés automatiquement en production)
+    // Getters et setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     
@@ -575,34 +584,39 @@ public class EventController {
 }
 EOF
 
-    # Dockerfile
+    # Dockerfile corrigé
     cat > Dockerfile << 'EOF'
 FROM openjdk:17-jdk-slim
 
+# Installer Gradle
+RUN apt-get update && apt-get install -y wget unzip && \
+    wget https://services.gradle.org/distributions/gradle-8.4-bin.zip && \
+    unzip gradle-8.4-bin.zip && \
+    mv gradle-8.4 /opt/gradle && \
+    ln -s /opt/gradle/bin/gradle /usr/bin/gradle && \
+    rm gradle-8.4-bin.zip && \
+    apt-get clean
+
 WORKDIR /app
 
-# Copy gradle wrapper and dependencies
-COPY gradle gradle
-COPY gradlew .
-COPY gradle.properties .
+# Copier les fichiers de build
 COPY build.gradle .
 COPY settings.gradle .
+COPY gradle.properties .
 
-# Download dependencies
-RUN ./gradlew build -x test --no-daemon || return 0
+# Télécharger les dépendances
+RUN gradle build -x test --no-daemon || return 0
 
-# Copy source code
+# Copier le code source
 COPY src src
 
-# Build application
-RUN ./gradlew clean build -x test --no-daemon
+# Construire l'application
+RUN gradle clean build -x test --no-daemon
 
 EXPOSE 8080
 
 CMD ["java", "-jar", "build/libs/event-service-0.0.1-SNAPSHOT.jar"]
 EOF
-
-    echo "rootProject.name = 'event-service'" > settings.gradle
 
     cd ../..
     echo "✅ Service Événements créé (PostgreSQL + Database per Service)"
@@ -1810,7 +1824,6 @@ create_analytics_service() {
     
     # Créer les répertoires nécessaires
     mkdir -p src/main/{java/com/fst/dmi/analyticsservice/{controller,service,model,repository,config},resources}
-    mkdir -p gradle
     
     # build.gradle
     cat > build.gradle << 'EOF'
@@ -1842,6 +1855,16 @@ test {
 }
 EOF
 
+    # settings.gradle
+    echo "rootProject.name = 'analytics-service'" > settings.gradle
+
+    # gradle.properties
+    cat > gradle.properties << 'EOF'
+org.gradle.daemon=false
+org.gradle.parallel=true
+org.gradle.caching=true
+EOF
+
     # Configuration
     cat > src/main/resources/application.yml << 'EOF'
 spring:
@@ -1855,7 +1878,7 @@ spring:
     password: ${RABBITMQ_PASSWORD:guest}
 
 server:
-  port: 8081
+  port: 8080
 
 logging:
   level:
@@ -2304,30 +2327,39 @@ public class AnalyticsController {
 }
 EOF
 
-    # Dockerfile
+    # Dockerfile corrigé
     cat > Dockerfile << 'EOF'
 FROM openjdk:17-jdk-slim
 
+# Installer Gradle
+RUN apt-get update && apt-get install -y wget unzip && \
+    wget https://services.gradle.org/distributions/gradle-8.4-bin.zip && \
+    unzip gradle-8.4-bin.zip && \
+    mv gradle-8.4 /opt/gradle && \
+    ln -s /opt/gradle/bin/gradle /usr/bin/gradle && \
+    rm gradle-8.4-bin.zip && \
+    apt-get clean
+
 WORKDIR /app
 
-COPY gradle gradle
-COPY gradlew .
-COPY gradle.properties .
+# Copier les fichiers de build
 COPY build.gradle .
 COPY settings.gradle .
+COPY gradle.properties .
 
-RUN ./gradlew build -x test --no-daemon || return 0
+# Télécharger les dépendances
+RUN gradle build -x test --no-daemon || return 0
 
+# Copier le code source
 COPY src src
 
-RUN ./gradlew clean build -x test --no-daemon
+# Construire l'application
+RUN gradle clean build -x test --no-daemon
 
-EXPOSE 8081
+EXPOSE 8080
 
 CMD ["java", "-jar", "build/libs/analytics-service-0.0.1-SNAPSHOT.jar"]
 EOF
-
-    echo "rootProject.name = 'analytics-service'" > settings.gradle
 
     cd ../..
     echo "✅ Service Analytics créé (Elasticsearch + Polyglot Persistence)"
@@ -3842,8 +3874,6 @@ create_docker_compose() {
     cd tp4-microservices-persistence
     
     cat > docker-compose.yml << 'EOF'
-version: '3.8'
-
 services:
   # =========================================================================
   # BASES DE DONNÉES - POLYGLOT PERSISTENCE
@@ -4362,10 +4392,8 @@ Ce TP vous fait implémenter une **architecture de persistance polyglotte compl�
 ### Installation Rapide
 
 ```bash
-# 1. Télécharger le code de départ
-curl -O https://raw.githubusercontent.com/votre-repo/tp4-script.sh
-chmod +x tp4-script.sh
-./tp4-script.sh
+# 1. Exécuter le script de génération
+./setup.sh
 
 # 2. Se déplacer dans le projet
 cd tp4-microservices-persistence

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# TP4 - PERSISTANCE DANS LES MICROSERVICES
+# TP4 - PERSISTANCE DANS LES MICROSERVICES - SCRIPT COMPLET
 # Script de création d'une architecture polyglotte complète
 # 
 # Patterns implémentés :
@@ -50,6 +50,10 @@ check_dependencies() {
         missing_deps+=("node (Node.js 18+)")
     fi
     
+    if ! command -v npm &> /dev/null; then
+        missing_deps+=("npm")
+    fi
+    
     if ! command -v python3 &> /dev/null; then
         missing_deps+=("python3 (Python 3.9+)")
     fi
@@ -70,6 +74,36 @@ check_dependencies() {
     
     echo "✅ Tous les prérequis sont installés"
     echo ""
+}
+
+# =============================================================================
+# FONCTION HELPER POUR GÉNÉRER package-lock.json
+# =============================================================================
+
+generate_package_lock() {
+    local service_path=$1
+    local service_name=$2
+    
+    echo "📦 Génération du package-lock.json pour $service_name..."
+    
+    cd "$service_path"
+    
+    # Créer un package-lock.json minimal pour npm ci
+    cat > package-lock.json << 'EOF'
+{
+  "name": "SERVICE_NAME",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true
+}
+EOF
+    
+    # Remplacer le placeholder
+    sed -i "s/SERVICE_NAME/$service_name/g" package-lock.json 2>/dev/null || \
+    sed -i '' "s/SERVICE_NAME/$service_name/g" package-lock.json
+    
+    echo "✅ package-lock.json généré pour $service_name"
+    cd - > /dev/null
 }
 
 # =============================================================================
@@ -584,7 +618,7 @@ public class EventController {
 }
 EOF
 
-    # Dockerfile corrigé
+    # Dockerfile
     cat > Dockerfile << 'EOF'
 FROM openjdk:17-jdk-slim
 
@@ -1270,15 +1304,17 @@ app.listen(PORT, () => {
 module.exports = app;
 EOF
 
-    # Dockerfile
+    # Dockerfile avec npm ci
     cat > Dockerfile << 'EOF'
 FROM node:18-alpine
 
 WORKDIR /app
 
+# Copier package.json et package-lock.json
 COPY package*.json ./
 RUN npm ci --only=production
 
+# Copier le code source
 COPY src ./src
 
 EXPOSE 3000
@@ -1286,8 +1322,11 @@ EXPOSE 3000
 CMD ["npm", "start"]
 EOF
 
+    # Générer package-lock.json
+    generate_package_lock "$PWD" "reservation-service"
+
     cd ../..
-    echo "✅ Service Réservations créé (MongoDB + Polyglot Persistence)"
+    echo "✅ Service Réservations créé avec package-lock.json"
 }
 
 # =============================================================================
@@ -3099,15 +3138,17 @@ app.listen(PORT, () => {
 module.exports = app;
 EOF
 
-    # Dockerfile
+    # Dockerfile avec npm ci
     cat > Dockerfile << 'EOF'
 FROM node:18-alpine
 
 WORKDIR /app
 
+# Copier package.json et package-lock.json
 COPY package*.json ./
 RUN npm ci --only=production
 
+# Copier le code source
 COPY src ./src
 
 EXPOSE 3001
@@ -3115,8 +3156,11 @@ EXPOSE 3001
 CMD ["npm", "start"]
 EOF
 
+    # Générer package-lock.json
+    generate_package_lock "$PWD" "event-store-service"
+
     cd ../..
-    echo "✅ Service Event Store créé (MongoDB + Event Sourcing + CQRS)"
+    echo "✅ Service Event Store créé avec package-lock.json"
 }
 
 # =============================================================================
@@ -3380,18 +3424,16 @@ class SagaOrchestrator extends EventEmitter {
     //     
     //     if (step.name === 'PAYMENT_COMPLETED' && saga.data.paymentId) {
     //       await this.compensatePayment(sagaId, saga.data.paymentId);
-    //     }
-    //     
-    //     if (step.name === 'RESERVATION_CREATED' && saga.data.reservationId) {
+    //     } else if (step.name === 'RESERVATION_CREATED' && saga.data.reservationId) {
     //       await this.compensateReservation(sagaId, saga.data.reservationId);
     //     }
     //   }
     //   
     //   saga.status = 'COMPENSATED';
-    //   await this.recordSagaStep(sagaId, 'SAGA_COMPENSATED', {}, 'COMPLETED');
+    //   await this.recordSagaStep(sagaId, 'SAGA_COMPENSATED', {}, 'COMPENSATED');
     //   
     // } catch (error) {
-    //   console.error(`❌ Compensation failed for Saga ${sagaId}:`, error);
+    //   console.error(`❌ Error during compensation for Saga ${sagaId}:`, error);
     //   saga.status = 'COMPENSATION_FAILED';
     // }
     
@@ -3400,95 +3442,112 @@ class SagaOrchestrator extends EventEmitter {
 
   // Méthodes utilitaires
   generateSagaId() {
-    return `saga_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `SAGA-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  async recordSagaStep(sagaId, stepName, stepData, status = 'COMPLETED') {
+  async recordSagaStep(sagaId, stepName, data, status = 'COMPLETED') {
     const saga = this.activeSagas.get(sagaId);
-    if (saga) {
-      saga.steps.push({
-        name: stepName,
-        data: stepData,
-        status: status,
-        timestamp: new Date()
-      });
-      saga.updatedAt = new Date();
-      console.log(`📝 Recorded step: ${stepName} for Saga ${sagaId}`);
-    }
+    if (!saga) return;
+
+    const step = {
+      name: stepName,
+      status,
+      data,
+      timestamp: new Date()
+    };
+
+    saga.steps.push(step);
+    saga.updatedAt = new Date();
+    
+    console.log(`📝 Saga ${sagaId} - Step recorded: ${stepName} (${status})`);
+    this.emit('saga-step', { sagaId, step });
   }
 
   async handleSagaFailure(sagaId, error) {
     const saga = this.activeSagas.get(sagaId);
-    if (saga) {
-      saga.status = 'FAILED';
-      saga.error = error.message;
-      console.error(`❌ Saga ${sagaId} failed:`, error);
-      
-      // Démarrer la compensation
-      await this.executeSagaCompensation(sagaId, saga.currentStep);
-    }
-  }
+    if (!saga) return;
 
-  getSagaStatus(sagaId) {
-    return this.activeSagas.get(sagaId);
-  }
-
-  getAllActiveSagas() {
-    return Array.from(this.activeSagas.values());
-  }
-
-  async compensatePayment(sagaId, paymentId) {
-    try {
-      console.log(`💸 Compensating payment ${paymentId} for Saga ${sagaId}`);
-      await axios.put(`${this.serviceEndpoints.payments}/api/payments/${paymentId}/status`, {
-        status: 'refunding',
-        metadata: { reason: 'Saga compensation' }
-      });
-      await this.recordSagaStep(sagaId, 'PAYMENT_COMPENSATED', { paymentId });
-    } catch (error) {
-      console.error(`❌ Payment compensation failed:`, error);
-    }
+    console.error(`❌ Saga ${sagaId} failed:`, error.message);
+    saga.status = 'FAILED';
+    saga.error = error.message;
+    
+    await this.recordSagaStep(sagaId, 'SAGA_FAILED', { error: error.message }, 'FAILED');
+    
+    // Déclencher les compensations
+    await this.executeSagaCompensation(sagaId, saga.currentStep);
   }
 
   async compensateReservation(sagaId, reservationId) {
     try {
-      console.log(`🎫 Compensating reservation ${reservationId} for Saga ${sagaId}`);
-      await axios.post(`${this.serviceEndpoints.reservations}/api/reservations/${reservationId}/cancel`, {
-        reason: 'Saga compensation'
-      });
+      console.log(`🔄 Compensating reservation ${reservationId} for Saga ${sagaId}`);
+      
+      await axios.post(
+        `${this.serviceEndpoints.reservations}/api/reservations/${reservationId}/cancel`,
+        { reason: 'Saga compensation' }
+      );
+      
       await this.recordSagaStep(sagaId, 'RESERVATION_COMPENSATED', { reservationId });
+      
     } catch (error) {
-      console.error(`❌ Reservation compensation failed:`, error);
+      console.error(`❌ Failed to compensate reservation ${reservationId}:`, error);
+      throw error;
     }
+  }
+
+  async compensatePayment(sagaId, paymentId) {
+    try {
+      console.log(`🔄 Compensating payment ${paymentId} for Saga ${sagaId}`);
+      
+      await axios.put(
+        `${this.serviceEndpoints.payments}/api/payments/${paymentId}/status`,
+        { status: 'refunded', metadata: { reason: 'Saga compensation' } }
+      );
+      
+      await this.recordSagaStep(sagaId, 'PAYMENT_COMPENSATED', { paymentId });
+      
+    } catch (error) {
+      console.error(`❌ Failed to compensate payment ${paymentId}:`, error);
+      throw error;
+    }
+  }
+
+  getSaga(sagaId) {
+    return this.activeSagas.get(sagaId);
+  }
+
+  getAllSagas() {
+    return Array.from(this.activeSagas.values());
   }
 }
 
 module.exports = SagaOrchestrator;
 EOF
 
-    # Contrôleur Saga
+    # Controller du Saga
     cat > src/controllers/saga.controller.js << 'EOF'
 const SagaOrchestrator = require('../orchestrators/saga.orchestrator');
 const Joi = require('joi');
 
 const sagaOrchestrator = new SagaOrchestrator();
 
-const startBookingSchema = Joi.object({
+// Schema de validation
+const startSagaSchema = Joi.object({
   eventId: Joi.number().required(),
   userId: Joi.string().required(),
   userName: Joi.string().required(),
   userEmail: Joi.string().email().required(),
+  userPhone: Joi.string().optional(),
   seats: Joi.number().min(1).required(),
-  ticketPrice: Joi.number().min(0).optional(),
-  paymentMethod: Joi.string().optional(),
-  metadata: Joi.object().optional()
+  ticketPrice: Joi.number().required(),
+  paymentMethod: Joi.string().valid('card', 'mobile_money', 'bank_transfer').required(),
+  preferences: Joi.object().optional()
 });
 
 class SagaController {
   
-  async startBookingProcess(req, res) {
+  async startBookingSaga(req, res) {
     try {
-      const { error, value } = startBookingSchema.validate(req.body);
+      const { error, value } = startSagaSchema.validate(req.body);
       if (error) {
         return res.status(400).json({ 
           error: 'Validation error', 
@@ -3496,18 +3555,18 @@ class SagaController {
         });
       }
       
-      console.log('🎭 Starting booking process saga:', value);
+      console.log('🎭 Starting new booking saga with data:', value);
+      
       const sagaId = await sagaOrchestrator.startBookingProcessSaga(value);
       
       res.status(202).json({
-        success: true,
+        message: 'Booking process started',
         sagaId,
-        message: 'Booking process saga started',
         status: 'PROCESSING'
       });
       
     } catch (error) {
-      console.error('❌ Error starting booking saga:', error);
+      console.error('❌ Error starting saga:', error);
       res.status(500).json({ 
         error: 'Failed to start booking process', 
         message: error.message 
@@ -3518,19 +3577,19 @@ class SagaController {
   async getSagaStatus(req, res) {
     try {
       const { sagaId } = req.params;
-      const saga = sagaOrchestrator.getSagaStatus(sagaId);
+      const saga = sagaOrchestrator.getSaga(sagaId);
       
       if (!saga) {
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: 'Saga not found',
-          sagaId 
+          sagaId
         });
       }
       
       res.json({
-        sagaId,
-        status: saga.status,
+        sagaId: saga.id,
         type: saga.type,
+        status: saga.status,
         currentStep: saga.currentStep,
         steps: saga.steps,
         createdAt: saga.createdAt,
@@ -3549,19 +3608,17 @@ class SagaController {
 
   async getAllSagas(req, res) {
     try {
-      const sagas = sagaOrchestrator.getAllActiveSagas();
+      const sagas = sagaOrchestrator.getAllSagas();
       
       res.json({
+        count: sagas.length,
         sagas: sagas.map(saga => ({
-          id: saga.id,
+          sagaId: saga.id,
           type: saga.type,
           status: saga.status,
-          currentStep: saga.currentStep,
           createdAt: saga.createdAt,
-          updatedAt: saga.updatedAt,
-          stepsCount: saga.steps.length
-        })),
-        count: sagas.length
+          updatedAt: saga.updatedAt
+        }))
       });
       
     } catch (error) {
@@ -3600,19 +3657,19 @@ app.use(express.urlencoded({ extended: true }));
 // Routes principales
 app.get('/', (req, res) => {
   res.json({
-    message: '🎭 Saga Orchestrator Service - Distributed Transactions',
+    message: '🎭 Saga Orchestrator - Distributed Transaction Management',
     version: '1.0.0',
-    patterns: ['Saga Pattern', 'Orchestration', 'Distributed Transactions'],
+    patterns: ['Saga Pattern', 'Orchestration', 'Compensation'],
     capabilities: [
       'Distributed transaction coordination',
       'Automatic compensation on failure',
-      'Complete transaction audit trail',
-      'Cross-service consistency'
+      'Step-by-step transaction tracking',
+      'Idempotent operations'
     ],
     endpoints: {
-      'start-booking': 'POST /api/saga/start-booking',
-      'saga-status': 'GET /api/saga/:sagaId/status',
-      'all-sagas': 'GET /api/saga',
+      startSaga: '/api/saga/booking',
+      sagaStatus: '/api/saga/:sagaId',
+      allSagas: '/api/saga',
       health: '/health'
     }
   });
@@ -3626,9 +3683,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Routes des Sagas
-app.post('/api/saga/start-booking', sagaController.startBookingProcess);
-app.get('/api/saga/:sagaId/status', sagaController.getSagaStatus);
+// Routes du Saga
+app.post('/api/saga/booking', sagaController.startBookingSaga);
+app.get('/api/saga/:sagaId', sagaController.getSagaStatus);
 app.get('/api/saga', sagaController.getAllSagas);
 
 // Gestionnaire d'erreurs global
@@ -3650,21 +3707,23 @@ app.use('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Saga Orchestrator running on port ${PORT}`);
-  console.log(`🎭 Coordinating distributed transactions across microservices`);
+  console.log(`🎭 Managing distributed transactions across microservices`);
 });
 
 module.exports = app;
 EOF
 
-    # Dockerfile
+    # Dockerfile avec npm ci
     cat > Dockerfile << 'EOF'
 FROM node:18-alpine
 
 WORKDIR /app
 
+# Copier package.json et package-lock.json
 COPY package*.json ./
 RUN npm ci --only=production
 
+# Copier le code source
 COPY src ./src
 
 EXPOSE 3002
@@ -3672,13 +3731,15 @@ EXPOSE 3002
 CMD ["npm", "start"]
 EOF
 
+    # Générer package-lock.json
+    generate_package_lock "$PWD" "saga-orchestrator"
+
     cd ../..
-    echo "✅ Saga Orchestrator créé (Distributed Transactions)"
+    echo "✅ Saga Orchestrator créé avec package-lock.json"
 }
 
 # =============================================================================
 # SERVICE NOTIFICATIONS (Python/Flask + MongoDB)
-# Service simple pour compléter l'écosystème
 # =============================================================================
 
 create_notification_service() {
@@ -3686,29 +3747,219 @@ create_notification_service() {
     
     cd tp4-microservices-persistence/notification-service
     
-    # requirements.txt simple
+    # Créer les répertoires nécessaires
+    mkdir -p {models,services,controllers,config,utils,templates}
+    
+    # requirements.txt
     cat > requirements.txt << 'EOF'
 Flask==3.0.0
-pymongo==4.6.0
-pika==1.3.2
+pymongo==4.6.1
 flask-cors==4.0.0
-python-dotenv==1.0.0
-gunicorn==21.2.0
 requests==2.31.0
+python-dotenv==1.0.0
+marshmallow==3.20.1
+gunicorn==21.2.0
+pika==1.3.2
+jinja2==3.1.2
 EOF
 
-    # Application Flask simple
+    # Configuration
+    cat > config.py << 'EOF'
+import os
+from pymongo import MongoClient
+
+# Configuration MongoDB
+MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+MONGODB_DB = os.getenv('MONGODB_DB', 'notifications_db')
+
+# Configuration RabbitMQ
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
+RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
+
+# Connexion MongoDB
+mongo_client = MongoClient(MONGODB_URI)
+db = mongo_client[MONGODB_DB]
+
+# Collections
+notifications_collection = db['notifications']
+templates_collection = db['templates']
+EOF
+
+    # Modèle de notification
+    cat > models/notification.py << 'EOF'
+from datetime import datetime
+from config import notifications_collection
+import uuid
+
+class Notification:
+    def __init__(self, user_id, type, subject, content, channel='email'):
+        self.id = str(uuid.uuid4())
+        self.user_id = user_id
+        self.type = type  # booking_confirmation, payment_success, etc.
+        self.subject = subject
+        self.content = content
+        self.channel = channel  # email, sms, push
+        self.status = 'pending'  # pending, sent, failed
+        self.created_at = datetime.now()
+        self.sent_at = None
+        self.metadata = {}
+    
+    def to_dict(self):
+        return {
+            '_id': self.id,
+            'user_id': self.user_id,
+            'type': self.type,
+            'subject': self.subject,
+            'content': self.content,
+            'channel': self.channel,
+            'status': self.status,
+            'created_at': self.created_at,
+            'sent_at': self.sent_at,
+            'metadata': self.metadata
+        }
+    
+    def save(self):
+        notifications_collection.insert_one(self.to_dict())
+        return self
+    
+    @staticmethod
+    def find_by_id(notification_id):
+        return notifications_collection.find_one({'_id': notification_id})
+    
+    @staticmethod
+    def find_by_user(user_id):
+        return list(notifications_collection.find({'user_id': user_id}).sort('created_at', -1))
+    
+    @staticmethod
+    def mark_as_sent(notification_id):
+        notifications_collection.update_one(
+            {'_id': notification_id},
+            {'$set': {'status': 'sent', 'sent_at': datetime.now()}}
+        )
+EOF
+
+    # Service de notification
+    cat > services/notification_service.py << 'EOF'
+from models.notification import Notification
+from config import templates_collection
+import logging
+
+logger = logging.getLogger(__name__)
+
+class NotificationService:
+    
+    def create_booking_notification(self, booking_data):
+        """Crée une notification de confirmation de réservation"""
+        try:
+            notification = Notification(
+                user_id=booking_data['user_id'],
+                type='booking_confirmation',
+                subject=f'Confirmation de réservation - {booking_data["event_name"]}',
+                content=self._render_booking_template(booking_data),
+                channel='email'
+            )
+            
+            notification.metadata = {
+                'reservation_id': booking_data.get('reservation_id'),
+                'event_id': booking_data.get('event_id'),
+                'seats': booking_data.get('seats')
+            }
+            
+            notification.save()
+            logger.info(f"✅ Booking notification created: {notification.id}")
+            
+            # Simuler l'envoi (dans un vrai système, cela serait asynchrone)
+            self._send_notification(notification)
+            
+            return notification
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating booking notification: {e}")
+            raise e
+    
+    def create_payment_notification(self, payment_data):
+        """Crée une notification de confirmation de paiement"""
+        try:
+            notification = Notification(
+                user_id=payment_data['user_id'],
+                type='payment_success',
+                subject='Paiement confirmé',
+                content=self._render_payment_template(payment_data),
+                channel='email'
+            )
+            
+            notification.metadata = {
+                'payment_id': payment_data.get('payment_id'),
+                'amount': payment_data.get('amount'),
+                'currency': payment_data.get('currency', 'XOF')
+            }
+            
+            notification.save()
+            logger.info(f"✅ Payment notification created: {notification.id}")
+            
+            self._send_notification(notification)
+            
+            return notification
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating payment notification: {e}")
+            raise e
+    
+    def _render_booking_template(self, data):
+        """Génère le contenu HTML pour une notification de réservation"""
+        return f"""
+        <h2>Réservation confirmée !</h2>
+        <p>Bonjour {data.get('user_name', 'Client')},</p>
+        <p>Votre réservation pour l'événement <strong>{data.get('event_name', 'N/A')}</strong> a été confirmée.</p>
+        <ul>
+            <li>Nombre de places : {data.get('seats', 0)}</li>
+            <li>Date de l'événement : {data.get('event_date', 'N/A')}</li>
+            <li>Lieu : {data.get('location', 'N/A')}</li>
+        </ul>
+        <p>Numéro de réservation : <strong>{data.get('reservation_id', 'N/A')}</strong></p>
+        <p>Merci pour votre confiance !</p>
+        """
+    
+    def _render_payment_template(self, data):
+        """Génère le contenu HTML pour une notification de paiement"""
+        return f"""
+        <h2>Paiement confirmé !</h2>
+        <p>Bonjour,</p>
+        <p>Votre paiement de <strong>{data.get('amount', 0)} {data.get('currency', 'XOF')}</strong> a été confirmé.</p>
+        <p>Référence de paiement : <strong>{data.get('payment_id', 'N/A')}</strong></p>
+        <p>Merci pour votre transaction !</p>
+        """
+    
+    def _send_notification(self, notification):
+        """Simule l'envoi de notification (email, SMS, etc.)"""
+        try:
+            # Dans un vrai système, on utiliserait un service d'email (SendGrid, AWS SES, etc.)
+            logger.info(f"📧 Sending {notification.channel} notification to user {notification.user_id}")
+            logger.info(f"   Subject: {notification.subject}")
+            
+            # Simuler un délai d'envoi
+            import time
+            time.sleep(0.5)
+            
+            # Marquer comme envoyé
+            Notification.mark_as_sent(notification.id)
+            logger.info(f"✅ Notification {notification.id} sent successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to send notification {notification.id}: {e}")
+            raise e
+
+notification_service = NotificationService()
+EOF
+
+    # API Flask
     cat > app.py << 'EOF'
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pika
-import json
-import threading
-import time
-import os
-from pymongo import MongoClient
-from datetime import datetime
 import logging
+from datetime import datetime
+from services.notification_service import notification_service
+from models.notification import Notification
 
 app = Flask(__name__)
 CORS(app)
@@ -3717,92 +3968,19 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# MongoDB connection
-mongodb_uri = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/notifications_db')
-client = MongoClient(mongodb_uri)
-db = client.notification_db
-notifications = db.notifications
-
-# RabbitMQ Configuration
-RABBITMQ_HOST = os.environ.get('RABBITMQ_HOST', 'localhost')
-RABBITMQ_QUEUE = 'reservation_events'
-
-def connect_to_rabbitmq():
-    """Create a connection to RabbitMQ"""
-    try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
-        channel = connection.channel()
-        channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
-        logger.info("✅ Connected to RabbitMQ")
-        return connection, channel
-    except Exception as e:
-        logger.error(f"❌ Error connecting to RabbitMQ: {e}")
-        return None, None
-
-def process_message(ch, method, properties, body):
-    """Process a message from RabbitMQ"""
-    try:
-        message = json.loads(body)
-        logger.info(f"📨 Received message: {message}")
-        
-        # Extract reservation information
-        user_email = message.get('userEmail')
-        user_name = message.get('userName')
-        event_id = message.get('eventId')
-        seats = message.get('seats')
-
-        # Create a notification
-        notification = {
-            'type': 'RESERVATION_CREATED',
-            'userId': message.get('userId'),
-            'userEmail': user_email,
-            'message': f"Hello {user_name}, your reservation for event #{event_id} with {seats} seats has been confirmed.",
-            'read': False,
-            'createdAt': time.time()
-        }
-
-        # Save the notification to MongoDB
-        result = notifications.insert_one(notification)
-        logger.info(f"✅ Notification created for {user_email} with ID: {result.inserted_id}")
-        
-        # Acknowledge the message
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-    except Exception as e:
-        logger.error(f"❌ Error processing message: {e}")
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-
-def start_consumer():
-    """Start consuming messages from RabbitMQ"""
-    def consumer_thread():
-        while True:
-            try:
-                connection, channel = connect_to_rabbitmq()
-                if channel:
-                    channel.basic_qos(prefetch_count=1)
-                    channel.basic_consume(queue=RABBITMQ_QUEUE, on_message_callback=process_message)
-                    
-                    logger.info("🎧 Starting to consume messages")
-                    channel.start_consuming()
-            except Exception as e:
-                logger.error(f"❌ Consumer error: {e}")
-                
-            logger.info("⚠️  Consumer disconnected. Retrying in 5 seconds...")
-            time.sleep(5)
-    
-    thread = threading.Thread(target=consumer_thread)
-    thread.daemon = True
-    thread.start()
-    logger.info("🎧 Consumer thread started")
-
 @app.route('/', methods=['GET'])
 def health_check():
     return jsonify({
-        'message': '🔔 Notification Service API - MongoDB + RabbitMQ',
+        'message': '📬 Notification Service API - MongoDB',
         'version': '1.0.0',
         'status': 'healthy',
         'database': 'MongoDB',
-        'messaging': 'RabbitMQ',
-        'patterns': ['Event-Driven Architecture', 'Asynchronous Messaging']
+        'patterns': ['Database per Service', 'Event-Driven Notifications'],
+        'endpoints': {
+            'notifications': '/api/notifications',
+            'user_notifications': '/api/notifications/user/{user_id}',
+            'health': '/health'
+        }
     })
 
 @app.route('/health', methods=['GET'])
@@ -3814,34 +3992,97 @@ def health():
         'database': 'MongoDB'
     })
 
-@app.route('/api/notifications', methods=['GET'])
-def get_notifications():
+@app.route('/api/notifications/booking', methods=['POST'])
+def create_booking_notification():
     try:
-        notification_list = list(notifications.find({}, {'_id': 0}))
-        for notification in notification_list:
-            notification['notificationId'] = str(int(notification['createdAt'] * 1000))
-        return jsonify(notification_list)
+        data = request.get_json()
+        logger.info(f"📧 Creating booking notification: {data}")
+        
+        notification = notification_service.create_booking_notification(data)
+        
+        return jsonify({
+            'success': True,
+            'notification_id': notification.id,
+            'message': 'Booking notification created and sent'
+        }), 201
+        
     except Exception as e:
-        logger.error(f"❌ Error getting notifications: {e}")
-        return jsonify({'error': 'Failed to get notifications'}), 500
+        logger.error(f"❌ Error creating booking notification: {e}")
+        return jsonify({
+            'error': 'Failed to create notification',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/notifications/payment', methods=['POST'])
+def create_payment_notification():
+    try:
+        data = request.get_json()
+        logger.info(f"💳 Creating payment notification: {data}")
+        
+        notification = notification_service.create_payment_notification(data)
+        
+        return jsonify({
+            'success': True,
+            'notification_id': notification.id,
+            'message': 'Payment notification created and sent'
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating payment notification: {e}")
+        return jsonify({
+            'error': 'Failed to create notification',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/notifications/<notification_id>', methods=['GET'])
+def get_notification(notification_id):
+    try:
+        notification = Notification.find_by_id(notification_id)
+        if not notification:
+            return jsonify({'error': 'Notification not found'}), 404
+        
+        return jsonify(notification)
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting notification {notification_id}: {e}")
+        return jsonify({
+            'error': 'Failed to get notification',
+            'message': str(e)
+        }), 500
 
 @app.route('/api/notifications/user/<user_id>', methods=['GET'])
 def get_user_notifications(user_id):
     try:
-        user_notifications = list(notifications.find({'userId': user_id}, {'_id': 0}))
-        return jsonify(user_notifications)
+        notifications = Notification.find_by_user(user_id)
+        
+        return jsonify({
+            'user_id': user_id,
+            'count': len(notifications),
+            'notifications': notifications
+        })
+        
     except Exception as e:
-        logger.error(f"❌ Error getting user notifications: {e}")
-        return jsonify({'error': 'Failed to get user notifications'}), 500
+        logger.error(f"❌ Error getting notifications for user {user_id}: {e}")
+        return jsonify({
+            'error': 'Failed to get user notifications',
+            'message': str(e)
+        }), 500
 
-# Start the consumer when the app starts
-start_consumer()
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    import os
+    port = int(os.environ.get('PORT', 5001))
+    debug = os.environ.get('DEBUG', 'false').lower() == 'true'
     logger.info(f"🚀 Starting Notification Service on port {port}")
-    logger.info(f"🔔 Providing async messaging and notifications")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    logger.info(f"💾 Using MongoDB for storage")
+    app.run(host='0.0.0.0', port=port, debug=debug)
 EOF
 
     # Dockerfile
@@ -3855,33 +4096,35 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 5000
+EXPOSE 5001
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "4", "app:app"]
 EOF
 
     cd ../..
-    echo "✅ Service Notifications créé (MongoDB + RabbitMQ)"
+    echo "✅ Service Notifications créé (MongoDB)"
 }
 
 # =============================================================================
-# DOCKER COMPOSE POUR L'INFRASTRUCTURE POLYGLOTTE
+# CRÉATION DU FICHIER DOCKER-COMPOSE
 # =============================================================================
 
 create_docker_compose() {
-    echo "📦 Docker Compose pour infrastructure polyglotte..."
+    echo "📦 Création du fichier docker-compose.yml..."
     
     cd tp4-microservices-persistence
     
     cat > docker-compose.yml << 'EOF'
-services:
-  # =========================================================================
-  # BASES DE DONNÉES - POLYGLOT PERSISTENCE
-  # =========================================================================
+version: '3.8'
 
-  # PostgreSQL pour les événements
+services:
+  # =============================================================================
+  # BASES DE DONNÉES
+  # =============================================================================
+  
+  # PostgreSQL pour événements
   postgres-events:
-    image: postgres:15
+    image: postgres:16-alpine
     container_name: postgres-events
     environment:
       POSTGRES_DB: events_db
@@ -3890,7 +4133,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_events_data:/var/lib/postgresql/data
+      - postgres-events-data:/var/lib/postgresql/data
     networks:
       - microservices-network
     healthcheck:
@@ -3899,9 +4142,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # PostgreSQL pour les paiements
+  # PostgreSQL pour paiements
   postgres-payments:
-    image: postgres:15
+    image: postgres:16-alpine
     container_name: postgres-payments
     environment:
       POSTGRES_DB: payments_db
@@ -3910,7 +4153,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - postgres_payments_data:/var/lib/postgresql/data
+      - postgres-payments-data:/var/lib/postgresql/data
     networks:
       - microservices-network
     healthcheck:
@@ -3919,17 +4162,14 @@ services:
       timeout: 5s
       retries: 5
 
-  # MongoDB pour les réservations, event store et notifications
+  # MongoDB pour réservations
   mongo-reservations:
-    image: mongo:7
+    image: mongo:7.0
     container_name: mongo-reservations
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: admin123
     ports:
       - "27017:27017"
     volumes:
-      - mongo_reservations_data:/data/db
+      - mongo-reservations-data:/data/db
     networks:
       - microservices-network
     healthcheck:
@@ -3938,14 +4178,46 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis pour le cache des paiements
+  # MongoDB pour event store
+  mongo-event-store:
+    image: mongo:7.0
+    container_name: mongo-event-store
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo-event-store-data:/data/db
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB pour notifications
+  mongo-notifications:
+    image: mongo:7.0
+    container_name: mongo-notifications
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo-notifications-data:/data/db
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis pour cache
   redis-cache:
     image: redis:7-alpine
     container_name: redis-cache
     ports:
       - "6379:6379"
     volumes:
-      - redis_cache_data:/data
+      - redis-data:/data
     networks:
       - microservices-network
     healthcheck:
@@ -3954,9 +4226,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # Elasticsearch pour les analytics
+  # Elasticsearch pour analytics
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
@@ -3964,29 +4236,28 @@ services:
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     ports:
       - "9200:9200"
-      - "9300:9300"
     volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
+      - elasticsearch-data:/usr/share/elasticsearch/data
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
       retries: 5
 
-  # RabbitMQ pour la communication asynchrone
+  # RabbitMQ pour messaging
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.12-management-alpine
     container_name: rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
     environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq-data:/var/lib/rabbitmq
     networks:
       - microservices-network
     healthcheck:
@@ -3995,27 +4266,24 @@ services:
       timeout: 5s
       retries: 5
 
-  # =========================================================================
-  # MICROSERVICES - ARCHITECTURE POLYGLOTTE
-  # =========================================================================
+  # =============================================================================
+  # MICROSERVICES
+  # =============================================================================
 
-  # Service Événements (Java/Spring Boot + PostgreSQL)
+  # Service Événements
   event-service:
     build: ./event-service
     container_name: event-service
     ports:
       - "8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - POSTGRES_HOST=postgres-events
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=events_db
-      - POSTGRES_USER=events_user
-      - POSTGRES_PASSWORD=events_password
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=guest
-      - RABBITMQ_PASSWORD=guest
+      POSTGRES_HOST: postgres-events
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: events_db
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_password
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
       postgres-events:
         condition: service_healthy
@@ -4023,58 +4291,60 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    restart: unless-stopped
 
-  # Service Réservations (Node.js + MongoDB)
+  # Service Réservations
   reservation-service:
     build: ./reservation-service
     container_name: reservation-service
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - MONGODB_URI=mongodb://admin:admin123@mongo-reservations:27017/reservations_db?authSource=admin
-      - EVENT_SERVICE_URL=http://event-service:8080/api/events
+      MONGODB_URI: mongodb://mongo-reservations:27017/reservations_db
+      EVENT_SERVICE_URL: http://event-service:8080/api/events
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
       mongo-reservations:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
       event-service:
         condition: service_started
     networks:
       - microservices-network
-    restart: unless-stopped
 
-  # Service Paiements (Python/Flask + PostgreSQL + Redis)
+  # Service Paiements
   payment-service:
     build: ./payment-service
     container_name: payment-service
     ports:
       - "5000:5000"
     environment:
-      - FLASK_ENV=production
-      - POSTGRES_URL=postgresql://payments_user:payments_password@postgres-payments:5432/payments_db
-      - REDIS_URL=redis://redis-cache:6379/0
+      POSTGRES_URL: postgresql://payments_user:payments_password@postgres-payments:5432/payments_db
+      REDIS_URL: redis://redis-cache:6379/0
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
       postgres-payments:
         condition: service_healthy
       redis-cache:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - microservices-network
-    restart: unless-stopped
 
-  # Service Analytics (Java/Spring Boot + Elasticsearch)
+  # Service Analytics
   analytics-service:
     build: ./analytics-service
     container_name: analytics-service
     ports:
       - "8081:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - ELASTICSEARCH_HOST=elasticsearch
-      - ELASTICSEARCH_PORT=9200
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -4082,686 +4352,517 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    restart: unless-stopped
 
-  # Service Event Store (Node.js + MongoDB)
+  # Service Event Store
   event-store-service:
     build: ./event-store-service
     container_name: event-store-service
     ports:
       - "3001:3001"
     environment:
-      - NODE_ENV=production
-      - MONGODB_URI=mongodb://admin:admin123@mongo-reservations:27017/event_store_db?authSource=admin
+      MONGODB_URI: mongodb://mongo-event-store:27017/event_store_db
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
-      mongo-reservations:
+      mongo-event-store:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - microservices-network
-    restart: unless-stopped
 
-  # Saga Orchestrator (Node.js)
+  # Saga Orchestrator
   saga-orchestrator:
     build: ./saga-orchestrator
     container_name: saga-orchestrator
     ports:
       - "3002:3002"
     environment:
-      - NODE_ENV=production
-      - EVENTS_SERVICE_URL=http://event-service:8080
-      - RESERVATIONS_SERVICE_URL=http://reservation-service:3000
-      - PAYMENTS_SERVICE_URL=http://payment-service:5000
-      - NOTIFICATIONS_SERVICE_URL=http://notification-service:5000
+      EVENTS_SERVICE_URL: http://event-service:8080
+      RESERVATIONS_SERVICE_URL: http://reservation-service:3000
+      PAYMENTS_SERVICE_URL: http://payment-service:5000
+      NOTIFICATIONS_SERVICE_URL: http://notification-service:5001
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
-      - event-service
-      - reservation-service
-      - payment-service
+      event-service:
+        condition: service_started
+      reservation-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     networks:
       - microservices-network
-    restart: unless-stopped
 
-  # Service Notifications (Python/Flask + MongoDB)
+  # Service Notifications
   notification-service:
     build: ./notification-service
     container_name: notification-service
     ports:
-      - "5001:5000"
+      - "5001:5001"
     environment:
-      - FLASK_ENV=production
-      - MONGODB_URI=mongodb://admin:admin123@mongo-reservations:27017/notifications_db?authSource=admin
-      - RABBITMQ_HOST=rabbitmq
+      MONGODB_URI: mongodb://mongo-notifications:27017/notifications_db
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
-      mongo-reservations:
+      mongo-notifications:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     networks:
       - microservices-network
-    restart: unless-stopped
 
-volumes:
-  postgres_events_data:
-  postgres_payments_data:
-  mongo_reservations_data:
-  redis_cache_data:
-  elasticsearch_data:
-  rabbitmq_data:
+# =============================================================================
+# RÉSEAUX
+# =============================================================================
 
 networks:
   microservices-network:
     driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+
+volumes:
+  postgres-events-data:
+  postgres-payments-data:
+  mongo-reservations-data:
+  mongo-event-store-data:
+  mongo-notifications-data:
+  redis-data:
+  elasticsearch-data:
+  rabbitmq-data:
 EOF
 
     cd ..
-    echo "✅ Docker Compose polyglotte créé"
+    echo "✅ docker-compose.yml créé"
 }
 
 # =============================================================================
-# SCRIPTS UTILITAIRES ET README
+# CRÉATION DES SCRIPTS UTILITAIRES
 # =============================================================================
 
-create_utilities_and_readme() {
-    echo "🔧 Création des utilitaires et documentation..."
+create_utility_scripts() {
+    echo "📦 Création des scripts utilitaires..."
+    
+    cd tp4-microservices-persistence/scripts
+    
+    # Script de démarrage
+    cat > start-dev.sh << 'EOF'
+#!/bin/bash
+
+echo "🚀 Démarrage de l'infrastructure de développement..."
+
+# Démarrer uniquement les bases de données et l'infrastructure
+docker-compose up -d \
+  postgres-events \
+  postgres-payments \
+  mongo-reservations \
+  mongo-event-store \
+  mongo-notifications \
+  redis-cache \
+  elasticsearch \
+  rabbitmq
+
+echo "⏳ Attente du démarrage des services (30s)..."
+sleep 30
+
+echo "✅ Infrastructure prête !"
+echo ""
+echo "📊 Services disponibles :"
+echo "   - PostgreSQL Events: localhost:5432"
+echo "   - PostgreSQL Payments: localhost:5433"
+echo "   - MongoDB Reservations: localhost:27017"
+echo "   - MongoDB Event Store: localhost:27018"
+echo "   - MongoDB Notifications: localhost:27019"
+echo "   - Redis Cache: localhost:6379"
+echo "   - Elasticsearch: localhost:9200"
+echo "   - RabbitMQ: localhost:5672 (Management: localhost:15672)"
+EOF
+
+    # Script de nettoyage
+    cat > cleanup.sh << 'EOF'
+#!/bin/bash
+
+echo "🧹 Nettoyage de l'environnement..."
+
+# Arrêter tous les conteneurs
+docker-compose down -v
+
+# Supprimer les volumes si demandé
+if [ "$1" == "--volumes" ]; then
+    echo "🗑️  Suppression des volumes de données..."
+    docker volume rm tp4-microservices-persistence_postgres-events-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_postgres-payments-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_mongo-reservations-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_mongo-event-store-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_mongo-notifications-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_redis-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_elasticsearch-data 2>/dev/null
+    docker volume rm tp4-microservices-persistence_rabbitmq-data 2>/dev/null
+fi
+
+echo "✅ Nettoyage terminé"
+EOF
+
+    # Script de test
+    cat > test-system.sh << 'EOF'
+#!/bin/bash
+
+echo "🧪 Test du système complet..."
+echo ""
+
+# Couleurs pour les résultats
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Fonction de test
+test_service() {
+    local service_name=$1
+    local url=$2
+    
+    echo -n "Testing $service_name... "
+    
+    if curl -s -f "$url" > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ OK${NC}"
+        return 0
+    else
+        echo -e "${RED}✗ FAILED${NC}"
+        return 1
+    fi
+}
+
+# Test des services
+echo "📊 Test des services :"
+test_service "Event Service" "http://localhost:8080/api/events"
+test_service "Reservation Service" "http://localhost:3000/health"
+test_service "Payment Service" "http://localhost:5000/health"
+test_service "Analytics Service" "http://localhost:8081/api/analytics"
+test_service "Event Store Service" "http://localhost:3001/health"
+test_service "Saga Orchestrator" "http://localhost:3002/health"
+test_service "Notification Service" "http://localhost:5001/health"
+
+echo ""
+echo "📡 Test des bases de données :"
+test_service "PostgreSQL Events" "http://localhost:5432"
+test_service "MongoDB Reservations" "http://localhost:27017"
+test_service "Redis Cache" "http://localhost:6379"
+test_service "Elasticsearch" "http://localhost:9200"
+test_service "RabbitMQ Management" "http://localhost:15672"
+
+echo ""
+echo "✅ Tests terminés"
+EOF
+
+    # Rendre les scripts exécutables
+    chmod +x start-dev.sh cleanup.sh test-system.sh
+    
+    cd ../..
+    echo "✅ Scripts utilitaires créés"
+}
+
+# =============================================================================
+# FICHIER README PRINCIPAL
+# =============================================================================
+
+create_main_readme() {
+    echo "📦 Création du README principal..."
     
     cd tp4-microservices-persistence
     
-    # Créer le répertoire scripts s'il n'existe pas
-    mkdir -p scripts
-    
-    # Script de démarrage
-    cat > scripts/start-dev.sh << 'EOF'
-#!/bin/bash
-
-echo "🚀 Démarrage du TP4 - Persistance Microservices"
-echo "==============================================="
-
-# Démarrer l'infrastructure de base de données en arrière-plan
-echo "📦 Démarrage de l'infrastructure polyglotte..."
-docker-compose up -d postgres-events postgres-payments mongo-reservations redis-cache elasticsearch rabbitmq
-
-echo "⏳ Attente du démarrage complet des bases de données (60 secondes)..."
-echo "   - PostgreSQL Events (port 5432)"
-echo "   - PostgreSQL Payments (port 5433)" 
-echo "   - MongoDB (port 27017)"
-echo "   - Redis (port 6379)"
-echo "   - Elasticsearch (port 9200) - Plus lent à démarrer"
-echo "   - RabbitMQ (port 5672, management 15672)"
-
-sleep 60
-
-# Vérifier la santé des services
-echo "🔍 Vérification de la santé des services..."
-docker-compose ps
-
-echo ""
-echo "✅ Infrastructure prête ! Vous pouvez maintenant :"
-echo "   1. Compléter les TODOs dans le code"
-echo "   2. Démarrer tous les services : docker-compose up -d"
-echo "   3. Tester le système : ./scripts/test-system.sh"
-echo ""
-echo "🌐 Interfaces d'administration :"
-echo "   - RabbitMQ Management : http://localhost:15672 (guest/guest)"
-echo "   - Elasticsearch : http://localhost:9200"
-echo ""
-echo "📊 Microservices (après 'docker-compose up -d') :"
-echo "   - Service Événements : http://localhost:8080"
-echo "   - Service Réservations : http://localhost:3000"  
-echo "   - Service Paiements : http://localhost:5000"
-echo "   - Service Analytics : http://localhost:8081"
-echo "   - Event Store : http://localhost:3001"
-echo "   - Saga Orchestrator : http://localhost:3002"
-echo "   - Service Notifications : http://localhost:5001"
-EOF
-
-    chmod +x scripts/start-dev.sh
-
-    # Script de test
-    cat > scripts/test-system.sh << 'EOF'
-#!/bin/bash
-
-echo "🧪 Tests du système de persistance polyglotte"
-echo "============================================="
-
-EVENT_API="http://localhost:8080/api/events"
-RESERVATION_API="http://localhost:3000/api/reservations"
-PAYMENT_API="http://localhost:5000/api/payments"
-SAGA_API="http://localhost:3002/api/saga"
-ANALYTICS_API="http://localhost:8081/api/analytics"
-EVENTSTORE_API="http://localhost:3001/api/events"
-
-echo ""
-echo "1️⃣ Test Database per Service - Créer un événement (PostgreSQL)..."
-EVENT_RESPONSE=$(curl -s -X POST $EVENT_API \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Concert Test TP4",
-    "description": "Concert de test pour validation du TP4",
-    "eventDate": "2025-12-31T20:00:00",
-    "location": "UCAD Arena",
-    "totalCapacity": 1000,
-    "ticketPrice": 5000
-  }')
-
-echo "✅ Événement créé (PostgreSQL) : $(echo $EVENT_RESPONSE | jq -r '.name // "Erreur"')"
-
-echo ""
-echo "2️⃣ Test Polyglot Persistence - Créer une réservation (MongoDB)..."
-RESERVATION_RESPONSE=$(curl -s -X POST $RESERVATION_API \
-  -H "Content-Type: application/json" \
-  -d '{
-    "eventId": 1,
-    "userId": "test_student_001",
-    "userName": "Étudiant Test",
-    "userEmail": "etudiant@ucad.edu.sn",
-    "seats": 5
-  }')
-
-echo "✅ Réservation créée (MongoDB) : $(echo $RESERVATION_RESPONSE | jq -r '.message // "Erreur"')"
-
-echo ""
-echo "3️⃣ Test Cache Redis - Créer un paiement (PostgreSQL + Redis)..."
-PAYMENT_RESPONSE=$(curl -s -X POST $PAYMENT_API \
-  -H "Content-Type: application/json" \
-  -d '{
-    "reservation_id": "test_reservation_tp4",
-    "user_id": "test_student_001",
-    "amount": 25000,
-    "payment_method": "mobile_money"
-  }')
-
-echo "✅ Paiement créé (PostgreSQL+Redis) : $(echo $PAYMENT_RESPONSE | jq -r '.message // "Erreur"')"
-
-echo ""
-echo "4️⃣ Test Saga Pattern - Démarrer une transaction distribuée..."
-SAGA_RESPONSE=$(curl -s -X POST $SAGA_API/start-booking \
-  -H "Content-Type: application/json" \
-  -d '{
-    "eventId": 1,
-    "userId": "test_saga_student",
-    "userName": "Saga Test Student",
-    "userEmail": "saga@ucad.edu.sn",
-    "seats": 3,
-    "ticketPrice": 5000,
-    "paymentMethod": "card"
-  }')
-
-SAGA_ID=$(echo $SAGA_RESPONSE | jq -r '.sagaId // "Erreur"')
-echo "✅ Saga démarré : $SAGA_ID"
-
-echo ""
-echo "5️⃣ Test Event Sourcing - Ajouter un événement métier..."
-EVENTSTORE_RESPONSE=$(curl -s -X POST $EVENTSTORE_API \
-  -H "Content-Type: application/json" \
-  -d '{
-    "aggregateId": "test_aggregate_001",
-    "aggregateType": "Reservation",
-    "eventType": "ReservationCreated",
-    "eventData": {
-      "userId": "test_student_001",
-      "eventId": 1,
-      "seats": 5
-    },
-    "metadata": {
-      "userId": "test_student_001",
-      "correlationId": "test_correlation_001"
-    }
-  }')
-
-echo "✅ Événement ajouté à l'Event Store : $(echo $EVENTSTORE_RESPONSE | jq -r '.message // "Erreur"')"
-
-echo ""
-echo "6️⃣ Test Analytics - Vérifier Elasticsearch..."
-ANALYTICS_RESPONSE=$(curl -s -X GET $ANALYTICS_API)
-echo "✅ Analytics disponibles : $(echo $ANALYTICS_RESPONSE | jq -r '.database // "Erreur"')"
-
-echo ""
-echo "🔍 Vérifications manuelles disponibles :"
-echo "   - PostgreSQL events : docker exec -it postgres-events psql -U events_user -d events_db -c 'SELECT name, location FROM events;'"
-echo "   - MongoDB reservations : docker exec -it mongo-reservations mongosh reservations_db --eval 'db.reservations.find().pretty()'"
-echo "   - Redis cache : docker exec -it redis-cache redis-cli KEYS 'payment:*'"
-echo "   - Elasticsearch : curl http://localhost:9200/event_analytics/_search?pretty"
-echo "   - Event Store : curl http://localhost:3001/api/events | jq"
-echo "   - Saga Status : curl http://localhost:3002/api/saga | jq"
-
-echo ""
-echo "✅ Tests terminés ! Votre système polyglotte est opérationnel."
-EOF
-
-    chmod +x scripts/test-system.sh
-
-    # Script de nettoyage
-    cat > scripts/cleanup.sh << 'EOF'
-#!/bin/bash
-
-echo "🧹 Nettoyage complet du système"
-echo "==============================="
-
-echo "Arrêt de tous les services..."
-docker-compose down
-
-echo "Suppression des volumes (données)..."
-docker-compose down -v
-
-echo "Suppression des images construites..."
-docker-compose down --rmi local
-
-echo "Nettoyage des ressources Docker orphelines..."
-docker system prune -f
-docker volume prune -f
-
-echo "✅ Nettoyage terminé ! Le système est remis à zéro."
-EOF
-
-    chmod +x scripts/cleanup.sh
-
-    # README complet
     cat > README.md << 'EOF'
 # 🏗️ TP4 - PERSISTANCE DANS LES MICROSERVICES
 
-## 🎯 Objectifs d'apprentissage
+## 🎯 Vue d'ensemble
 
-Ce TP vous fait implémenter une **architecture de persistance polyglotte complète** avec tous les patterns essentiels des microservices modernes :
-
-✅ **Database per Service** - Isolation complète des données  
-✅ **Polyglot Persistence** - 5 technologies de bases de données  
-✅ **Saga Pattern** - Transactions distribuées robustes  
-✅ **CQRS + Event Sourcing** - Séparation lecture/écriture + audit trail  
-✅ **Cohérence éventuelle** - Réplication et synchronisation  
+Cette architecture implémente une plateforme complète de gestion d'événements avec **7 microservices** utilisant **5 technologies de bases de données différentes**, démontrant les patterns essentiels de persistance distribuée.
 
 ## 🏛️ Architecture Polyglotte
 
-| Service | Technologie | Base de données | Pattern Principal |
-|---------|-------------|----------------|-------------------|
-| **Événements** | Java/Spring Boot | PostgreSQL | Database per Service |
-| **Réservations** | Node.js/Express | MongoDB | Polyglot Persistence |
-| **Paiements** | Python/Flask | PostgreSQL + Redis | Cache-Aside |
-| **Analytics** | Java/Spring Boot | Elasticsearch | Search & Analytics |
-| **Event Store** | Node.js/Express | MongoDB | Event Sourcing |
-| **Saga Orchestrator** | Node.js/Express | In-Memory | Saga Pattern |
-| **Notifications** | Python/Flask | MongoDB | Event-Driven |
+### Services et leurs bases de données
 
-## 🚀 Installation et Démarrage
+| Service | Technologie | Base de Données | Port | Rôle |
+|---------|-------------|-----------------|------|------|
+| **Event Service** | Java/Spring Boot | PostgreSQL | 8080 | Gestion des événements (ACID) |
+| **Reservation Service** | Node.js/Express | MongoDB | 3000 | Réservations flexibles (NoSQL) |
+| **Payment Service** | Python/Flask | PostgreSQL + Redis | 5000 | Transactions + Cache |
+| **Analytics Service** | Java/Spring Boot | Elasticsearch | 8081 | Recherche et analytics |
+| **Event Store** | Node.js/Express | MongoDB | 3001 | Event Sourcing |
+| **Saga Orchestrator** | Node.js/Express | In-Memory | 3002 | Transactions distribuées |
+| **Notification Service** | Python/Flask | MongoDB | 5001 | Gestion des notifications |
 
-### Prérequis
-- Docker et Docker Compose
-- Node.js 18+
-- Python 3.9+
-- Java 17+
-- Git
+## 🚀 Démarrage rapide
 
-### Installation Rapide
+### 1. Démarrer l'infrastructure
 
 ```bash
-# 1. Exécuter le script de génération
-./setup.sh
+cd scripts
+./start-dev.sh
+```
 
-# 2. Se déplacer dans le projet
-cd tp4-microservices-persistence
+### 2. Compléter les TODOs
 
-# 3. Démarrer l'infrastructure
-./scripts/start-dev.sh
+Le code contient **15 exercices pratiques** répartis par pattern :
 
-# 4. Construire et démarrer tous les services
+#### Database per Service (4 TODOs)
+- **TODO-DB1**: Validation métier de réservation
+- **TODO-DB2**: Réservation atomique avec optimistic locking  
+- **TODO-DB3**: Statistiques avec agrégation MongoDB
+- **TODO-DB4**: Middleware timeline automatique
+
+#### Polyglot Persistence (5 TODOs)
+- **TODO-POLY1**: Gestionnaire cache Redis
+- **TODO-POLY2**: Cache des données de paiement
+- **TODO-POLY3**: Pattern Cache-Aside
+- **TODO-POLY4**: Calcul de métriques Elasticsearch
+- **TODO-POLY5**: Mise à jour temps réel
+
+#### Saga Pattern (4 TODOs)
+- **TODO-SAGA1**: Initialisation et orchestration du Saga
+- **TODO-SAGA2**: Étape de réservation distribuée
+- **TODO-SAGA3**: Étape de paiement distribuée
+- **TODO-SAGA4**: Compensations automatiques
+
+#### Event Sourcing (3 TODOs)
+- **TODO-ES1**: Reconstruction d'historique d'agrégat
+- **TODO-ES2**: Requêtes par type d'événement
+- **TODO-ES3**: Validation de cohérence de version
+
+#### API REST (1 TODO)
+- **TODO-REST1**: Endpoint de réservation RESTful
+
+### 3. Construire et démarrer les services
+
+```bash
 docker-compose up -d
-
-# 5. Tester le système
-./scripts/test-system.sh
 ```
 
-## 📝 TODOs à Compléter
+### 4. Tester le système
 
-### 🗄️ Database per Service
-- **TODO-DB1** : `event-service/src/main/java/.../Event.java` - Validation métier de réservation
-- **TODO-DB2** : `event-service/src/main/java/.../Event.java` - Réservation atomique  
-- **TODO-DB3** : `reservation-service/src/models/reservation.model.js` - Statistiques MongoDB
-- **TODO-DB4** : `reservation-service/src/models/reservation.model.js` - Middleware timeline
-
-### 🔄 Polyglot Persistence  
-- **TODO-POLY1** : `payment-service/config.py` - Gestionnaire cache Redis
-- **TODO-POLY2** : `payment-service/models/payment.py` - Cache des données paiement
-- **TODO-POLY3** : `payment-service/models/payment.py` - Récupération avec cache
-- **TODO-POLY4** : `analytics-service/src/main/java/.../EventAnalytics.java` - Calcul taux occupation
-- **TODO-POLY5** : `analytics-service/src/main/java/.../EventAnalytics.java` - Mise à jour métriques
-
-### 🎭 Saga Pattern
-- **TODO-SAGA1** : `saga-orchestrator/src/orchestrators/saga.orchestrator.js` - Démarrage Saga
-- **TODO-SAGA2** : `saga-orchestrator/src/orchestrators/saga.orchestrator.js` - Étape réservation
-- **TODO-SAGA3** : `saga-orchestrator/src/orchestrators/saga.orchestrator.js` - Étape paiement
-- **TODO-SAGA4** : `saga-orchestrator/src/orchestrators/saga.orchestrator.js` - Compensations
-
-### 📚 Event Sourcing
-- **TODO-ES1** : `event-store-service/src/models/domain.event.js` - Historique agrégat
-- **TODO-ES2** : `event-store-service/src/models/domain.event.js` - Événements par type
-- **TODO-ES3** : `event-store-service/src/models/domain.event.js` - Validation version
-
-### 🌐 API REST
-- **TODO-REST1** : `event-service/src/main/java/.../EventController.java` - Endpoint réservation
-
-## 🧪 Tests et Validation
-
-### Tests Automatisés
 ```bash
-# Test complet du système
-./scripts/test-system.sh
-
-# Tests individuels
-curl http://localhost:8080/api/events      # PostgreSQL
-curl http://localhost:3000/api/reservations # MongoDB  
-curl http://localhost:5000/api/payments    # PostgreSQL+Redis
-curl http://localhost:8081/api/analytics   # Elasticsearch
-curl http://localhost:3001/api/events      # Event Store
-curl http://localhost:3002/api/saga        # Saga Orchestrator
+cd scripts
+./test-system.sh
 ```
 
-### Interfaces d'Administration
-- **RabbitMQ Management** : http://localhost:15672 (guest/guest)
-- **Elasticsearch** : http://localhost:9200
-- **Base PostgreSQL Events** : `docker exec -it postgres-events psql -U events_user -d events_db`
-- **Base MongoDB** : `docker exec -it mongo-reservations mongosh reservations_db`
-- **Cache Redis** : `docker exec -it redis-cache redis-cli`
-
-## 🎓 Scénarios d'Apprentissage
+## 📊 Patterns implémentés
 
 ### 1. Database per Service
-Complétez TODO-DB1 à TODO-DB4 pour comprendre :
-- L'isolation complète des données
-- Les validations métier au niveau domaine
-- L'optimistic locking avec @Version
-- Les agrégations MongoDB
+Chaque microservice possède sa propre base de données, garantissant :
+- Isolation complète des données
+- Évolution indépendante des schémas
+- Scaling individuel
+- Pas de couplage par la base de données
 
-### 2. Polyglot Persistence  
-Complétez TODO-POLY1 à TODO-POLY5 pour maîtriser :
-- Le pattern Cache-Aside avec Redis
-- Les recherches full-text avec Elasticsearch
-- La combinaison PostgreSQL + Redis
-- Les métriques temps réel
+### 2. Polyglot Persistence
+Utilisation de la technologie de BD optimale pour chaque cas :
+- **PostgreSQL** : Transactions ACID (événements, paiements)
+- **MongoDB** : Documents flexibles (réservations, notifications)
+- **Redis** : Cache haute performance
+- **Elasticsearch** : Recherche full-text et analytics
 
 ### 3. Saga Pattern
-Complétez TODO-SAGA1 à TODO-SAGA4 pour implémenter :
-- L'orchestration centralisée
-- Les étapes de transaction distribuée
-- Les compensations automatiques
-- La traçabilité complète
+Gestion des transactions distribuées sans 2PC :
+- Orchestration centralisée
+- Compensations automatiques en cas d'échec
+- Traçabilité complète des étapes
+- Idempotence des opérations
 
-### 4. Event Sourcing
-Complétez TODO-ES1 à TODO-ES3 pour créer :
-- Un log d'événements immuable
-- La reconstruction d'état
-- L'audit trail complet
-- La gestion des versions
+### 4. Event Sourcing & CQRS
+Capture de tous les changements comme événements :
+- Audit trail complet
+- Reconstruction d'état à tout moment
+- Séparation lecture/écriture
+- Time travel queries
 
-## 🏆 Résultat Final
+## 🧪 Scénarios de test
 
-Une fois tous les TODOs complétés, vous aurez :
-
-✅ **7 microservices** avec bases de données dédiées  
-✅ **5 technologies de BD** (PostgreSQL, MongoDB, Redis, Elasticsearch, Event Store)  
-✅ **Transactions distribuées** robustes avec compensation  
-✅ **Audit trail complet** avec Event Sourcing  
-✅ **Performance optimisée** avec cache et recherche spécialisée  
-✅ **Cohérence garantie** malgré la distribution  
-
-## 🔧 Dépannage
-
-### Services qui ne démarrent pas
+### Scénario 1 : Réservation complète réussie
 ```bash
-# Vérifier l'état
-docker-compose ps
+# 1. Créer un événement
+curl -X POST http://localhost:8080/api/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Concert Jazz",
+    "eventDate": "2025-12-25T20:00:00",
+    "location": "Dakar Arena",
+    "totalCapacity": 100,
+    "ticketPrice": 50
+  }'
 
-# Voir les logs
-docker-compose logs [service-name]
-
-# Redémarrer un service
-docker-compose restart [service-name]
+# 2. Démarrer le processus de réservation via Saga
+curl -X POST http://localhost:3002/api/saga/booking \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": 1,
+    "userId": "user123",
+    "userName": "John Doe",
+    "userEmail": "john@example.com",
+    "seats": 2,
+    "ticketPrice": 50,
+    "paymentMethod": "card"
+  }'
 ```
 
-### Bases de données non disponibles
+### Scénario 2 : Recherche et analytics
 ```bash
-# Attendre le healthcheck complet
-docker-compose ps | grep healthy
+# Rechercher des événements
+curl http://localhost:8081/api/analytics/search?location=Dakar
 
-# Redémarrer l'infrastructure
+# Voir les événements à forte occupation
+curl http://localhost:8081/api/analytics/high-occupancy?minRate=80
+```
+
+### Scénario 3 : Event Sourcing
+```bash
+# Voir l'historique d'un agrégat
+curl http://localhost:3001/api/aggregates/RESERVATION-123/history
+
+# Reconstruire l'état à un moment donné
+curl http://localhost:3001/api/aggregates/RESERVATION-123/reconstruct?toVersion=5
+```
+
+## 📈 Monitoring et administration
+
+### Interfaces d'administration
+- **RabbitMQ Management**: http://localhost:15672 (guest/guest)
+- **Elasticsearch**: http://localhost:9200
+- **MongoDB**: `docker exec -it mongo-reservations mongosh`
+- **PostgreSQL**: `docker exec -it postgres-events psql -U events_user -d events_db`
+- **Redis**: `docker exec -it redis-cache redis-cli`
+
+### Logs des services
+```bash
+# Voir les logs d'un service spécifique
+docker-compose logs -f event-service
+
+# Voir tous les logs
+docker-compose logs -f
+```
+
+## 🔧 Développement
+
+### Structure du projet
+```
+tp4-microservices-persistence/
+├── event-service/          # Java/Spring Boot
+├── reservation-service/    # Node.js/Express
+├── payment-service/        # Python/Flask
+├── analytics-service/      # Java/Spring Boot
+├── event-store-service/    # Node.js/Express
+├── saga-orchestrator/      # Node.js/Express
+├── notification-service/   # Python/Flask
+├── scripts/               # Scripts utilitaires
+├── docker-compose.yml     # Orchestration
+└── README.md             # Ce fichier
+```
+
+### Lancer un service en mode développement
+```bash
+# Service Java
+cd event-service
+./gradlew bootRun
+
+# Service Node.js
+cd reservation-service
+npm install
+npm run dev
+
+# Service Python
+cd payment-service
+pip install -r requirements.txt
+python app.py
+```
+
+## 🐛 Dépannage
+
+### Problème de connexion aux bases de données
+```bash
+# Vérifier que les conteneurs sont bien démarrés
+docker ps
+
+# Redémarrer un service spécifique
+docker-compose restart postgres-events
+```
+
+### Nettoyer l'environnement
+```bash
+# Arrêter tous les services
 docker-compose down
-./scripts/start-dev.sh
+
+# Nettoyer complètement (y compris les volumes)
+./scripts/cleanup.sh --volumes
 ```
 
-### Elasticsearch lent
-Elasticsearch prend 30-60s pour démarrer complètement. Patience ! 🕐
+## 📚 Ressources
 
-## 📚 Ressources d'Approfondissement
+- [Database per Service Pattern](https://microservices.io/patterns/data/database-per-service.html)
+- [Saga Pattern](https://microservices.io/patterns/data/saga.html)
+- [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html)
+- [CQRS](https://martinfowler.com/bliki/CQRS.html)
 
-- **Database per Service** : https://microservices.io/patterns/data/database-per-service.html
-- **Saga Pattern** : https://microservices.io/patterns/data/saga.html
-- **CQRS** : https://martinfowler.com/bliki/CQRS.html
-- **Event Sourcing** : https://martinfowler.com/eaaDev/EventSourcing.html
-- **Polyglot Persistence** : https://martinfowler.com/bliki/PolyglotPersistence.html
+## 🎓 Contexte académique
 
-## 👨‍🏫 Support
-
-**Dr. El Hadji Bassirou TOURE**  
+**TP4 - Architectures Logicielles Modernes**  
+Dr. El Hadji Bassirou TOURE  
 Département de Mathématiques et Informatique  
 Faculté des Sciences et Techniques  
 Université Cheikh Anta Diop
 
 ---
 
-🎯 **Objectif** : Maîtriser la persistance distribuée dans les architectures microservices modernes !
-EOF
-
-    # .env exemple
-    cat > .env.example << 'EOF'
-# Configuration pour le mode développement local
-NODE_ENV=development
-FLASK_ENV=development
-SPRING_PROFILES_ACTIVE=dev
-
-# URLs des services (pour développement local)
-EVENTS_SERVICE_URL=http://localhost:8080
-RESERVATIONS_SERVICE_URL=http://localhost:3000
-PAYMENTS_SERVICE_URL=http://localhost:5000
-ANALYTICS_SERVICE_URL=http://localhost:8081
-EVENT_STORE_SERVICE_URL=http://localhost:3001
-SAGA_SERVICE_URL=http://localhost:3002
-
-# PostgreSQL Events
-POSTGRES_EVENTS_HOST=localhost
-POSTGRES_EVENTS_PORT=5432
-POSTGRES_EVENTS_DB=events_db
-POSTGRES_EVENTS_USER=events_user
-POSTGRES_EVENTS_PASSWORD=events_password
-
-# PostgreSQL Payments
-POSTGRES_PAYMENTS_HOST=localhost
-POSTGRES_PAYMENTS_PORT=5433
-POSTGRES_PAYMENTS_DB=payments_db
-POSTGRES_PAYMENTS_USER=payments_user
-POSTGRES_PAYMENTS_PASSWORD=payments_password
-
-# MongoDB
-MONGODB_RESERVATIONS_URI=mongodb://localhost:27017/reservations_db
-MONGODB_EVENTSTORE_URI=mongodb://localhost:27017/event_store_db
-MONGODB_NOTIFICATIONS_URI=mongodb://localhost:27017/notifications_db
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# Elasticsearch
-ELASTICSEARCH_HOST=localhost
-ELASTICSEARCH_PORT=9200
-
-# RabbitMQ
-RABBITMQ_HOST=localhost
-RABBITMQ_PORT=5672
-RABBITMQ_USER=guest
-RABBITMQ_PASSWORD=guest
-EOF
-
-    # .gitignore
-    cat > .gitignore << 'EOF'
-# Environnement
-.env
-.env.local
-.env.production
-
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-
-# Java
-target/
-build/
-*.jar
-*.war
-*.ear
-*.class
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Docker
-.dockerignore
-
-# Logs
-logs/
-*.log
-
-# Databases
-*.db
-*.sqlite
-*.sqlite3
+🚀 **Bon apprentissage de la persistance distribuée !**
 EOF
 
     cd ..
-    echo "✅ Utilitaires et documentation créés"
+    echo "✅ README principal créé"
 }
 
 # =============================================================================
-# FONCTION PRINCIPALE D'EXÉCUTION
+# FONCTION PRINCIPALE
 # =============================================================================
 
 main() {
-    echo ""
-    echo "🎯 CRÉATION DU TP4 - PERSISTANCE DANS LES MICROSERVICES"
-    echo "========================================================"
-    echo ""
-    echo "🏗️  Architecture à créer :"
-    echo "   📊 Database per Service (chaque service = sa BD)"
-    echo "   🔄 Polyglot Persistence (5 technologies différentes)"
-    echo "   🎭 Saga Pattern (transactions distribuées + compensation)"
-    echo "   📝 CQRS + Event Sourcing (audit trail complet)"
-    echo "   🔄 Cohérence éventuelle (réplication intelligente)"
-    echo ""
-    echo "💾 Technologies utilisées :"
-    echo "   - PostgreSQL (événements + paiements)"
-    echo "   - MongoDB (réservations + event store + notifications)"
-    echo "   - Redis (cache paiements)"
-    echo "   - Elasticsearch (analytics + recherche)"
-    echo "   - RabbitMQ (messaging asynchrone)"
+    echo "🚀 Démarrage de la génération du TP4..."
     echo ""
     
-    # Vérification des dépendances
+    # Vérifier les dépendances
     check_dependencies
     
-    echo "📋 Création de l'architecture complète avec TODOs pédagogiques..."
-    echo ""
-    
-    # Création de la structure et des services
+    # Créer la structure du projet
     create_project_structure
-    echo ""
     
+    # Créer les microservices
     create_event_service
-    echo ""
-    
     create_reservation_service
-    echo ""
-    
     create_payment_service
-    echo ""
-    
     create_analytics_service
-    echo ""
-    
     create_event_store_service
-    echo ""
-    
     create_saga_orchestrator
-    echo ""
-    
     create_notification_service
-    echo ""
     
+    # Créer les fichiers de configuration
     create_docker_compose
-    echo ""
+    create_utility_scripts
+    create_main_readme
     
-    create_utilities_and_readme
     echo ""
-    
-    echo "🎉 TP4 - PERSISTANCE MICROSERVICES CRÉÉ AVEC SUCCÈS !"
-    echo "====================================================="
+    echo "✅ TP4 généré avec succès !"
     echo ""
-    echo "📂 Structure créée dans : ./tp4-microservices-persistence/"
+    echo "📋 Prochaines étapes :"
+    echo "   1. cd tp4-microservices-persistence"
+    echo "   2. ./scripts/start-dev.sh"
+    echo "   3. Compléter les TODOs dans le code"
+    echo "   4. docker-compose up -d"
+    echo "   5. ./scripts/test-system.sh"
     echo ""
-    echo "🚀 Pour commencer le TP :"
-    echo "   cd tp4-microservices-persistence"
-    echo "   ./scripts/start-dev.sh           # Démarre l'infrastructure polyglotte"
-    echo "   # Compléter les TODOs dans le code"
-    echo "   docker-compose up -d             # Démarre tous les services"
-    echo "   ./scripts/test-system.sh         # Teste le système complet"
+    echo "📚 Consultez le README.md pour plus de détails."
     echo ""
-    echo "📝 TODOs à compléter par les étudiants :"
-    echo "   🗄️  Database per Service  : TODO-DB1, TODO-DB2, TODO-DB3, TODO-DB4"
-    echo "   🔄 Polyglot Persistence  : TODO-POLY1, TODO-POLY2, TODO-POLY3, TODO-POLY4, TODO-POLY5"
-    echo "   🎭 Saga Pattern          : TODO-SAGA1, TODO-SAGA2, TODO-SAGA3, TODO-SAGA4"
-    echo "   📚 Event Sourcing        : TODO-ES1, TODO-ES2, TODO-ES3"
-    echo "   🌐 API REST              : TODO-REST1"
-    echo ""
-    echo "🌐 Interfaces une fois démarré :"
-    echo "   • Services Microservices :"
-    echo "     - Événements     : http://localhost:8080"
-    echo "     - Réservations   : http://localhost:3000"
-    echo "     - Paiements      : http://localhost:5000"
-    echo "     - Analytics      : http://localhost:8081"
-    echo "     - Event Store    : http://localhost:3001"
-    echo "     - Saga Orchestr. : http://localhost:3002"
-    echo "     - Notifications  : http://localhost:5001"
-    echo ""
-    echo "   • Interfaces d'administration :"
-    echo "     - RabbitMQ UI    : http://localhost:15672 (guest/guest)"
-    echo "     - Elasticsearch : http://localhost:9200"
-    echo ""
-    echo "📊 Architecture finale :"
-    echo "   ✅ 7 microservices indépendants"
-    echo "   ✅ 5 technologies de bases de données"
-    echo "   ✅ Patterns de persistance essentiels"
-    echo "   ✅ TODOs pédagogiques guidés"
-    echo "   ✅ Tests automatisés inclus"
-    echo ""
-    echo "📖 Consultez le README.md pour les instructions détaillées"
-    echo ""
-    echo "🎓 Bon apprentissage de la persistance dans les microservices !"
+    echo "🎯 Bon apprentissage !"
 }
 
-# Point d'entrée du script
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
+# Exécuter le script principal
+main

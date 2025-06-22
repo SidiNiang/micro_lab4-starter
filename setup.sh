@@ -77,36 +77,6 @@ check_dependencies() {
 }
 
 # =============================================================================
-# FONCTION HELPER POUR GÉNÉRER package-lock.json
-# =============================================================================
-
-generate_package_lock() {
-    local service_path=$1
-    local service_name=$2
-    
-    echo "📦 Génération du package-lock.json pour $service_name..."
-    
-    cd "$service_path"
-    
-    # Créer un package-lock.json minimal pour npm ci
-    cat > package-lock.json << 'EOF'
-{
-  "name": "SERVICE_NAME",
-  "version": "1.0.0",
-  "lockfileVersion": 3,
-  "requires": true
-}
-EOF
-    
-    # Remplacer le placeholder
-    sed -i "s/SERVICE_NAME/$service_name/g" package-lock.json 2>/dev/null || \
-    sed -i '' "s/SERVICE_NAME/$service_name/g" package-lock.json
-    
-    echo "✅ package-lock.json généré pour $service_name"
-    cd - > /dev/null
-}
-
-# =============================================================================
 # CRÉATION DE LA STRUCTURE DU PROJET
 # =============================================================================
 
@@ -1304,15 +1274,17 @@ app.listen(PORT, () => {
 module.exports = app;
 EOF
 
-    # Dockerfile avec npm ci
+    # Dockerfile CORRIGÉ - utilise npm install au lieu de npm ci
     cat > Dockerfile << 'EOF'
 FROM node:18-alpine
 
 WORKDIR /app
 
-# Copier package.json et package-lock.json
-COPY package*.json ./
-RUN npm ci --only=production
+# Copier package.json uniquement
+COPY package.json ./
+
+# Installer les dépendances et générer package-lock.json
+RUN npm install --production
 
 # Copier le code source
 COPY src ./src
@@ -1322,11 +1294,8 @@ EXPOSE 3000
 CMD ["npm", "start"]
 EOF
 
-    # Générer package-lock.json
-    generate_package_lock "$PWD" "reservation-service"
-
     cd ../..
-    echo "✅ Service Réservations créé avec package-lock.json"
+    echo "✅ Service Réservations créé"
 }
 
 # =============================================================================
@@ -3138,15 +3107,17 @@ app.listen(PORT, () => {
 module.exports = app;
 EOF
 
-    # Dockerfile avec npm ci
+    # Dockerfile CORRIGÉ - utilise npm install au lieu de npm ci
     cat > Dockerfile << 'EOF'
 FROM node:18-alpine
 
 WORKDIR /app
 
-# Copier package.json et package-lock.json
-COPY package*.json ./
-RUN npm ci --only=production
+# Copier package.json uniquement
+COPY package.json ./
+
+# Installer les dépendances et générer package-lock.json
+RUN npm install --production
 
 # Copier le code source
 COPY src ./src
@@ -3156,11 +3127,8 @@ EXPOSE 3001
 CMD ["npm", "start"]
 EOF
 
-    # Générer package-lock.json
-    generate_package_lock "$PWD" "event-store-service"
-
     cd ../..
-    echo "✅ Service Event Store créé avec package-lock.json"
+    echo "✅ Service Event Store créé"
 }
 
 # =============================================================================
@@ -3713,15 +3681,17 @@ app.listen(PORT, () => {
 module.exports = app;
 EOF
 
-    # Dockerfile avec npm ci
+    # Dockerfile CORRIGÉ - utilise npm install au lieu de npm ci
     cat > Dockerfile << 'EOF'
 FROM node:18-alpine
 
 WORKDIR /app
 
-# Copier package.json et package-lock.json
-COPY package*.json ./
-RUN npm ci --only=production
+# Copier package.json uniquement
+COPY package.json ./
+
+# Installer les dépendances et générer package-lock.json
+RUN npm install --production
 
 # Copier le code source
 COPY src ./src
@@ -3731,11 +3701,8 @@ EXPOSE 3002
 CMD ["npm", "start"]
 EOF
 
-    # Générer package-lock.json
-    generate_package_lock "$PWD" "saga-orchestrator"
-
     cd ../..
-    echo "✅ Saga Orchestrator créé avec package-lock.json"
+    echo "✅ Saga Orchestrator créé"
 }
 
 # =============================================================================

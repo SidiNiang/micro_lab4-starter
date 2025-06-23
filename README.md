@@ -22,9 +22,10 @@ Cette architecture implémente une plateforme complète de gestion d'événement
 
 ### 0. Génération du code de départ
 
-`````bash
+```bash
 chmod +x setup.sh
 ./setup.sh
+```
 
 ### 1. Démarrer l'infrastructure
 
@@ -67,7 +68,7 @@ Le code contient **15 exercices pratiques** répartis par pattern :
 
 ```bash
 docker-compose up -d
-`````
+````
 
 ### 4. Tester le système
 

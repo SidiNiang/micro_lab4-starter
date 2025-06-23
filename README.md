@@ -29,21 +29,24 @@ chmod +x setup.sh
 
 ### 1. Démarrer l'infrastructure
 
-````bash
+```bash
 cd scripts
 ./start-dev.sh
+```
 
 ### 2. Compléter les TODOs
 
 Le code contient **15 exercices pratiques** répartis par pattern :
 
 #### Database per Service (4 TODOs)
+
 - **TODO-DB1**: Validation métier de réservation
 - **TODO-DB2**: Réservation atomique avec optimistic locking
 - **TODO-DB3**: Statistiques avec agrégation MongoDB
 - **TODO-DB4**: Middleware timeline automatique
 
 #### Polyglot Persistence (5 TODOs)
+
 - **TODO-POLY1**: Gestionnaire cache Redis
 - **TODO-POLY2**: Cache des données de paiement
 - **TODO-POLY3**: Pattern Cache-Aside
@@ -51,24 +54,27 @@ Le code contient **15 exercices pratiques** répartis par pattern :
 - **TODO-POLY5**: Mise à jour temps réel
 
 #### Saga Pattern (4 TODOs)
+
 - **TODO-SAGA1**: Initialisation et orchestration du Saga
 - **TODO-SAGA2**: Étape de réservation distribuée
 - **TODO-SAGA3**: Étape de paiement distribuée
 - **TODO-SAGA4**: Compensations automatiques
 
 #### Event Sourcing (3 TODOs)
+
 - **TODO-ES1**: Reconstruction d'historique d'agrégat
 - **TODO-ES2**: Requêtes par type d'événement
 - **TODO-ES3**: Validation de cohérence de version
 
 #### API REST (1 TODO)
+
 - **TODO-REST1**: Endpoint de réservation RESTful
 
 ### 3. Construire et démarrer les services
 
 ```bash
 docker-compose up -d
-````
+```
 
 ### 4. Tester le système
 

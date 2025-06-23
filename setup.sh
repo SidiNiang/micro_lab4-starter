@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# TP4 - PERSISTANCE DANS LES MICROSERVICES - SCRIPT COMPLET
+# TP4 - PERSISTANCE DANS LES MICROSERVICES - SCRIPT COMPLET CORRIGÉ
 # Script de création d'une architecture polyglotte complète
 # 
 # Patterns implémentés :
@@ -10,6 +10,8 @@
 # ✅ Saga Pattern (transactions distribuées)
 # ✅ CQRS + Event Sourcing (séparation lecture/écriture)
 # ✅ Cohérence éventuelle (réplication de données)
+# 
+# Total TODOs : 31 exercices pratiques
 # 
 # Auteur: Dr. El Hadji Bassirou TOURE
 # Université: DMI/FST/UCAD
@@ -27,6 +29,8 @@ echo "   🔄 Polyglot Persistence (5 technologies de BD différentes)"
 echo "   🔗 Saga Pattern (transactions distribuées robustes)"
 echo "   📝 CQRS + Event Sourcing (audit trail complet)"
 echo "   🔄 Cohérence éventuelle (réplication intelligente)"
+echo ""
+echo "📚 31 exercices pratiques (TODOs) à compléter"
 echo ""
 
 # =============================================================================
@@ -637,7 +641,7 @@ create_reservation_service() {
     cd tp4-microservices-persistence/reservation-service
     
     # Créer les répertoires nécessaires
-    mkdir -p src/{controllers,services,models,config,utils}
+    mkdir -p src/{controllers,services,models,config,utils,handlers,compensations}
     mkdir -p test
     
     # package.json
@@ -1058,9 +1062,128 @@ class EventService {
 module.exports = new EventService();
 EOF
 
+    # Service de compensation (TODO-SAGA5 et TODO-SAGA6)
+    cat > src/compensations/reservation.compensation.js << 'EOF'
+const Reservation = require('../models/reservation.model');
+const eventService = require('../services/event.service');
+
+class ReservationCompensationService {
+  
+  // =========================================================================
+  // TODO-SAGA5: Implémentez la compensation de réservation
+  // =========================================================================
+  /**
+   * Cette méthode doit annuler une réservation et libérer les places
+   * 
+   * Actions à effectuer :
+   * 1. Trouver la réservation par ID
+   * 2. Vérifier qu'elle peut être annulée (status != 'cancelled')
+   * 3. Libérer les places dans le service événements
+   * 4. Marquer la réservation comme annulée
+   * 5. Enregistrer la raison de l'annulation dans la timeline
+   * 
+   * @param {String} reservationId - ID de la réservation à compenser
+   * @param {String} reason - Raison de la compensation
+   */
+  async compensateReservation(reservationId, reason = 'Saga compensation') {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // const reservation = await Reservation.findById(reservationId);
+      // if (!reservation) {
+      //   throw new Error(`Reservation ${reservationId} not found`);
+      // }
+      // 
+      // if (reservation.status === 'cancelled') {
+      //   console.log(`Reservation ${reservationId} already cancelled`);
+      //   return;
+      // }
+      // 
+      // // Libérer les places
+      // await this.releaseEventSeats(
+      //   reservation.eventId, 
+      //   reservation.bookingDetails.seats
+      // );
+      // 
+      // // Marquer comme annulée
+      // reservation.status = 'cancelled';
+      // reservation.timeline.push({
+      //   status: 'cancelled',
+      //   timestamp: new Date(),
+      //   reason: reason,
+      //   updatedBy: 'saga-compensator'
+      // });
+      // 
+      // await reservation.save();
+      // console.log(`✅ Reservation ${reservationId} compensated`);
+      
+    } catch (error) {
+      console.error(`Failed to compensate reservation ${reservationId}:`, error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-SAGA6: Implémentez la vérification de l'état de compensation
+  // =========================================================================
+  /**
+   * Cette méthode doit vérifier si une réservation peut être compensée
+   * 
+   * Critères :
+   * 1. La réservation existe
+   * 2. Le statut n'est pas déjà 'cancelled' ou 'refunded'
+   * 3. La réservation n'est pas trop ancienne (ex: moins de 24h)
+   * 
+   * @param {String} reservationId - ID de la réservation
+   * @returns {Boolean} true si la compensation est possible
+   */
+  async canCompensateReservation(reservationId) {
+    // ⚠️  TODO: À implémenter par les étudiants
+    
+    // Exemple de solution :
+    // try {
+    //   const reservation = await Reservation.findById(reservationId);
+    //   if (!reservation) return false;
+    //   
+    //   if (['cancelled', 'refunded'].includes(reservation.status)) {
+    //     return false;
+    //   }
+    //   
+    //   // Vérifier si pas trop ancienne (24h)
+    //   const hoursSinceCreation = (Date.now() - reservation.createdAt) / (1000 * 60 * 60);
+    //   if (hoursSinceCreation > 24) {
+    //     return false;
+    //   }
+    //   
+    //   return true;
+    // } catch (error) {
+    //   console.error(`Error checking compensation eligibility:`, error);
+    //   return false;
+    // }
+    
+    return false; // Placeholder - à remplacer
+  }
+
+  // Méthode pour libérer les places dans le service événements
+  async releaseEventSeats(eventId, seats) {
+    try {
+      const response = await eventService.releaseSeats(eventId, seats);
+      return response;
+    } catch (error) {
+      console.error(`Failed to release ${seats} seats for event ${eventId}:`, error);
+      throw error;
+    }
+  }
+}
+
+module.exports = new ReservationCompensationService();
+EOF
+
     # Contrôleur principal
     cat > src/controllers/reservation.controller.js << 'EOF'
 const reservationService = require('../services/reservation.service');
+const compensationService = require('../compensations/reservation.compensation');
 const Joi = require('joi');
 
 // Validation schema
@@ -1188,9 +1311,476 @@ class ReservationController {
       });
     }
   }
+
+  async compensateReservation(req, res) {
+    try {
+      const { reason } = req.body;
+      await compensationService.compensateReservation(
+        req.params.id, 
+        reason || 'Saga compensation'
+      );
+      res.json({ message: 'Reservation compensated successfully' });
+    } catch (error) {
+      console.error('❌ Error compensating reservation:', error);
+      res.status(500).json({ 
+        error: 'Failed to compensate reservation', 
+        message: error.message 
+      });
+    }
+  }
 }
 
 module.exports = new ReservationController();
+EOF
+
+    # Command Handler pour CQRS (TODO-ES4, TODO-ES5, TODO-ES6)
+    cat > src/handlers/reservation.command.handler.js << 'EOF'
+const DomainEvent = require('../../event-store-service/src/models/domain.event');
+const { v4: uuidv4 } = require('uuid');
+
+class ReservationCommandHandler {
+  constructor(eventStore, reservationRepository) {
+    this.eventStore = eventStore;
+    this.reservationRepository = reservationRepository;
+  }
+
+  // =========================================================================
+  // TODO-ES4: Implémentez le traitement de la commande CreateReservation
+  // =========================================================================
+  /**
+   * Cette méthode doit valider la commande et générer un événement ReservationCreated
+   * 
+   * Étapes :
+   * 1. Valider la commande (champs requis, valeurs valides)
+   * 2. Vérifier les règles métier (places disponibles, etc.)
+   * 3. Générer l'événement ReservationCreated avec les données
+   * 4. Sauvegarder dans l'Event Store
+   * 5. Déclencher la mise à jour des vues de lecture
+   * 
+   * @param {Object} command - Commande CreateReservation
+   * @returns {Object} Résultat avec reservationId et event
+   */
+  async handleCreateReservation(command) {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // // 1. Valider la commande
+      // this.validateCreateReservationCommand(command);
+      // 
+      // // 2. Générer un ID unique pour la réservation
+      // const reservationId = uuidv4();
+      // 
+      // // 3. Obtenir la prochaine version
+      // const version = await this.getNextVersion(reservationId);
+      // 
+      // // 4. Créer les données de l'événement
+      // const eventData = {
+      //   reservationId,
+      //   eventId: command.eventId,
+      //   userId: command.userId,
+      //   userName: command.userName,
+      //   userEmail: command.userEmail,
+      //   seats: command.seats,
+      //   totalAmount: command.totalAmount,
+      //   currency: command.currency || 'XOF',
+      //   status: 'pending'
+      // };
+      // 
+      // // 5. Sauvegarder l'événement
+      // const event = await this.saveEvent(
+      //   reservationId,
+      //   'Reservation',
+      //   'ReservationCreated',
+      //   eventData,
+      //   version,
+      //   command.metadata
+      // );
+      // 
+      // console.log(`Reservation created: ${reservationId}`);
+      // return { reservationId, event };
+      
+    } catch (error) {
+      console.error('Error handling CreateReservation command:', error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-ES5: Implémentez le traitement de la commande ConfirmReservation
+  // =========================================================================
+  /**
+   * Cette méthode doit changer le statut de la réservation et générer l'événement approprié
+   * 
+   * Étapes :
+   * 1. Récupérer l'historique de la réservation depuis l'Event Store
+   * 2. Reconstruire l'état actuel en rejouant les événements
+   * 3. Valider que la confirmation est possible (statut actuel = 'pending')
+   * 4. Générer l'événement ReservationConfirmed
+   * 5. Sauvegarder et déclencher les mises à jour
+   * 
+   * @param {Object} command - Commande ConfirmReservation avec reservationId
+   */
+  async handleConfirmReservation(command) {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // const { reservationId } = command;
+      // 
+      // // 1. Récupérer l'historique
+      // const history = await this.eventStore.getAggregateHistory(reservationId);
+      // if (history.length === 0) {
+      //   throw new Error(`Reservation ${reservationId} not found`);
+      // }
+      // 
+      // // 2. Reconstruire l'état actuel
+      // const currentState = await this.reconstructReservationState(reservationId);
+      // 
+      // // 3. Valider la transition
+      // if (currentState.status !== 'pending') {
+      //   throw new Error(`Cannot confirm reservation in status ${currentState.status}`);
+      // }
+      // 
+      // // 4. Générer l'événement
+      // const version = await this.getNextVersion(reservationId);
+      // const eventData = {
+      //   reservationId,
+      //   previousStatus: currentState.status,
+      //   newStatus: 'confirmed',
+      //   confirmedAt: new Date()
+      // };
+      // 
+      // // 5. Sauvegarder
+      // const event = await this.saveEvent(
+      //   reservationId,
+      //   'Reservation',
+      //   'ReservationConfirmed',
+      //   eventData,
+      //   version,
+      //   command.metadata
+      // );
+      // 
+      // return { reservationId, event };
+      
+    } catch (error) {
+      console.error('Error handling ConfirmReservation command:', error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-ES6: Implémentez la reconstruction de l'état d'une réservation
+  // =========================================================================
+  /**
+   * Cette méthode doit rejouer tous les événements pour reconstituer l'état actuel
+   * 
+   * Principe de l'Event Sourcing :
+   * 1. Récupérer tous les événements de l'agrégat
+   * 2. Partir d'un état initial vide
+   * 3. Appliquer chaque événement dans l'ordre pour modifier l'état
+   * 4. Retourner l'état final reconstitué
+   * 
+   * @param {String} reservationId - ID de la réservation
+   * @returns {Object} État actuel de la réservation
+   */
+  async reconstructReservationState(reservationId) {
+    // ⚠️  TODO: À implémenter par les étudiants
+    
+    // Exemple de solution :
+    // const events = await this.eventStore.getAggregateHistory(reservationId);
+    // 
+    // // État initial
+    // let state = {
+    //   reservationId,
+    //   status: null,
+    //   version: 0
+    // };
+    // 
+    // // Rejouer chaque événement
+    // for (const event of events) {
+    //   switch (event.eventType) {
+    //     case 'ReservationCreated':
+    //       state = {
+    //         ...state,
+    //         ...event.eventData,
+    //         status: event.eventData.status || 'pending',
+    //         version: event.version
+    //       };
+    //       break;
+    //       
+    //     case 'ReservationConfirmed':
+    //       state.status = 'confirmed';
+    //       state.confirmedAt = event.eventData.confirmedAt;
+    //       state.version = event.version;
+    //       break;
+    //       
+    //     case 'ReservationCancelled':
+    //       state.status = 'cancelled';
+    //       state.cancelledAt = event.eventData.cancelledAt;
+    //       state.version = event.version;
+    //       break;
+    //   }
+    // }
+    // 
+    // return state;
+    
+    return {}; // Placeholder - à remplacer
+  }
+
+  // Méthodes utilitaires
+  async saveEvent(aggregateId, aggregateType, eventType, eventData, version, metadata = {}) {
+    const domainEvent = new DomainEvent({
+      eventId: uuidv4(),
+      aggregateId,
+      aggregateType,
+      eventType,
+      eventData,
+      version,
+      metadata: {
+        ...metadata,
+        correlationId: metadata.correlationId || uuidv4()
+      },
+      timestamp: new Date()
+    });
+
+    await domainEvent.save();
+    
+    // Publier l'événement pour mise à jour des vues de lecture
+    await this.publishEvent(domainEvent);
+    
+    return domainEvent;
+  }
+
+  async publishEvent(domainEvent) {
+    // Publier l'événement via messaging pour mise à jour des projections
+    // Intégration avec RabbitMQ du TP précédent
+    console.log(`Event published: ${domainEvent.eventType} for ${domainEvent.aggregateId}`);
+  }
+
+  validateCreateReservationCommand(command) {
+    if (!command.eventId || !command.userId || !command.seats) {
+      throw new Error('Invalid CreateReservation command: missing required fields');
+    }
+    if (command.seats <= 0) {
+      throw new Error('Invalid CreateReservation command: seats must be positive');
+    }
+  }
+
+  async getNextVersion(aggregateId) {
+    const lastEvent = await DomainEvent.findOne({ aggregateId })
+      .sort({ version: -1 })
+      .select('version');
+    
+    return lastEvent ? lastEvent.version + 1 : 1;
+  }
+}
+
+module.exports = ReservationCommandHandler;
+EOF
+
+    # Projection pour vues de lecture (TODO-ES7, TODO-ES8, TODO-ES9)
+    cat > src/handlers/reservation.projection.js << 'EOF'
+const mongoose = require('mongoose');
+
+// Schéma de vue de lecture optimisée (dénormalisée)
+const reservationViewSchema = new mongoose.Schema({
+  reservationId: { type: String, required: true, unique: true, index: true },
+  eventId: { type: Number, required: true, index: true },
+  eventName: String,
+  eventDate: Date,
+  eventLocation: String,
+  userId: { type: String, required: true, index: true },
+  userName: String,
+  userEmail: String,
+  seats: { type: Number, required: true },
+  totalAmount: Number,
+  currency: String,
+  status: { type: String, required: true, index: true },
+  paymentStatus: String,
+  paymentId: String,
+  createdAt: { type: Date, required: true },
+  confirmedAt: Date,
+  cancelledAt: Date,
+  lastUpdated: { type: Date, default: Date.now }
+}, {
+  collection: 'reservation_views'
+});
+
+const ReservationView = mongoose.model('ReservationView', reservationViewSchema);
+
+class ReservationProjectionHandler {
+  
+  // =========================================================================
+  // TODO-ES7: Implémentez la gestion de l'événement ReservationCreated
+  // =========================================================================
+  /**
+   * Cette méthode doit créer une nouvelle vue de lecture lors de la création
+   * 
+   * Actions :
+   * 1. Extraire les données de l'événement
+   * 2. Enrichir avec des données du service Event si nécessaire
+   * 3. Créer la vue de lecture dénormalisée
+   * 4. Sauvegarder dans la collection reservation_views
+   * 
+   * @param {Object} event - Événement ReservationCreated
+   */
+  async handleReservationCreated(event) {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // const { eventData } = event;
+      // 
+      // // Enrichir avec les données de l'événement
+      // const eventDetails = await this.enrichWithEventData(eventData.eventId);
+      // 
+      // // Créer la vue de lecture
+      // const view = new ReservationView({
+      //   reservationId: eventData.reservationId,
+      //   eventId: eventData.eventId,
+      //   eventName: eventDetails?.name || 'Unknown Event',
+      //   eventDate: eventDetails?.eventDate,
+      //   eventLocation: eventDetails?.location,
+      //   userId: eventData.userId,
+      //   userName: eventData.userName,
+      //   userEmail: eventData.userEmail,
+      //   seats: eventData.seats,
+      //   totalAmount: eventData.totalAmount,
+      //   currency: eventData.currency,
+      //   status: eventData.status,
+      //   createdAt: event.timestamp
+      // });
+      // 
+      // await view.save();
+      // console.log(`✅ Reservation view created for ${eventData.reservationId}`);
+      
+    } catch (error) {
+      console.error('Error handling ReservationCreated projection:', error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-ES8: Implémentez la gestion de l'événement ReservationConfirmed
+  // =========================================================================
+  /**
+   * Cette méthode doit mettre à jour la vue existante lors de la confirmation
+   * 
+   * Actions :
+   * 1. Trouver la vue existante par reservationId
+   * 2. Mettre à jour le statut à 'confirmed'
+   * 3. Ajouter confirmedAt avec le timestamp
+   * 4. Sauvegarder les modifications
+   * 
+   * @param {Object} event - Événement ReservationConfirmed
+   */
+  async handleReservationConfirmed(event) {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // const { eventData } = event;
+      // 
+      // const view = await ReservationView.findOne({ 
+      //   reservationId: eventData.reservationId 
+      // });
+      // 
+      // if (!view) {
+      //   throw new Error(`View not found for reservation ${eventData.reservationId}`);
+      // }
+      // 
+      // view.status = 'confirmed';
+      // view.confirmedAt = eventData.confirmedAt || event.timestamp;
+      // view.lastUpdated = new Date();
+      // 
+      // await view.save();
+      // console.log(`✅ Reservation view updated to confirmed for ${eventData.reservationId}`);
+      
+    } catch (error) {
+      console.error('Error handling ReservationConfirmed projection:', error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-ES9: Implémentez une requête optimisée pour les réservations par utilisateur
+  // =========================================================================
+  /**
+   * Cette méthode doit utiliser la vue dénormalisée pour des performances optimales
+   * 
+   * Fonctionnalités :
+   * 1. Filtrer par userId
+   * 2. Appliquer les filtres optionnels (status, dates)
+   * 3. Trier par date de création décroissante
+   * 4. Paginer les résultats
+   * 
+   * @param {String} userId - ID de l'utilisateur
+   * @param {Object} options - Options de filtrage et pagination
+   * @returns {Array} Liste des réservations de l'utilisateur
+   */
+  async getUserReservations(userId, options = {}) {
+    // ⚠️  TODO: À implémenter par les étudiants
+    
+    // Exemple de solution :
+    // try {
+    //   const { 
+    //     status, 
+    //     fromDate, 
+    //     toDate, 
+    //     limit = 20, 
+    //     offset = 0 
+    //   } = options;
+    //   
+    //   // Construire la requête
+    //   const query = { userId };
+    //   
+    //   if (status) {
+    //     query.status = status;
+    //   }
+    //   
+    //   if (fromDate || toDate) {
+    //     query.createdAt = {};
+    //     if (fromDate) query.createdAt.$gte = new Date(fromDate);
+    //     if (toDate) query.createdAt.$lte = new Date(toDate);
+    //   }
+    //   
+    //   // Exécuter la requête optimisée
+    //   const reservations = await ReservationView
+    //     .find(query)
+    //     .sort({ createdAt: -1 })
+    //     .skip(offset)
+    //     .limit(limit)
+    //     .lean();
+    //   
+    //   return reservations;
+    //   
+    // } catch (error) {
+    //   console.error('Error getting user reservations:', error);
+    //   throw error;
+    // }
+    
+    return []; // Placeholder - à remplacer
+  }
+
+  // Méthode utilitaire pour enrichir les données
+  async enrichWithEventData(eventId) {
+    try {
+      // Appel au service Event pour récupérer les détails
+      // En production, pourrait utiliser un cache Redis
+      const response = await fetch(`http://localhost:8080/api/events/${eventId}`);
+      if (response.ok) {
+        return await response.json();
+      }
+      return null;
+    } catch (error) {
+      console.warn(`Could not enrich with event data for eventId ${eventId}:`, error);
+      return null;
+    }
+  }
+}
+
+module.exports = { ReservationView, ReservationProjectionHandler };
 EOF
 
     # Application principale
@@ -1223,9 +1813,10 @@ app.get('/', (req, res) => {
     message: '📝 Reservation Service API - MongoDB + Polyglot Persistence',
     version: '1.0.0',
     database: 'MongoDB',
-    patterns: ['Database per Service', 'Polyglot Persistence'],
+    patterns: ['Database per Service', 'Polyglot Persistence', 'CQRS', 'Saga Compensation'],
     endpoints: {
       reservations: '/api/reservations',
+      compensations: '/api/reservations/:id/compensate',
       health: '/health'
     }
   });
@@ -1247,6 +1838,7 @@ app.get('/api/reservations/user/:userId', reservationController.getUserReservati
 app.get('/api/reservations/event/:eventId', reservationController.getEventReservations);
 app.put('/api/reservations/:id/status', reservationController.updateReservationStatus);
 app.post('/api/reservations/:id/cancel', reservationController.cancelReservation);
+app.post('/api/reservations/:id/compensate', reservationController.compensateReservation);
 app.get('/api/reservations/stats/:eventId', reservationController.getReservationStats);
 
 // Gestionnaire d'erreurs global
@@ -1295,7 +1887,7 @@ CMD ["npm", "start"]
 EOF
 
     cd ../..
-    echo "✅ Service Réservations créé"
+    echo "✅ Service Réservations créé avec TODOs SAGA et CQRS"
 }
 
 # =============================================================================
@@ -1309,7 +1901,7 @@ create_payment_service() {
     cd tp4-microservices-persistence/payment-service
     
     # Créer les répertoires nécessaires
-    mkdir -p {models,services,controllers,config,utils,migrations}
+    mkdir -p {models,services,controllers,config,utils,migrations,compensations}
     
     # requirements.txt
     cat > requirements.txt << 'EOF'
@@ -1670,6 +2262,146 @@ class PaymentService:
 payment_service = PaymentService()
 EOF
 
+    # Service de compensation (TODO-SAGA7 et TODO-SAGA8)
+    cat > compensations/payment_compensation.py << 'EOF'
+from sqlalchemy.orm import Session
+from models.payment import Payment
+from config import SessionLocal
+import logging
+
+class PaymentCompensationService:
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+    
+    # =========================================================================
+    # TODO-SAGA7: Implémentez la compensation de paiement (remboursement)
+    # =========================================================================
+    """
+    Cette méthode doit initier un remboursement et mettre à jour le statut
+    
+    Actions :
+    1. Trouver le paiement par ID
+    2. Vérifier qu'il est dans un état remboursable (completed)
+    3. Initier le processus de remboursement
+    4. Mettre à jour le statut à 'refunding' puis 'refunded'
+    5. Enregistrer la raison du remboursement dans les métadonnées
+    
+    @param payment_id: ID du paiement à rembourser
+    @param reason: Raison du remboursement
+    """
+    def compensate_payment(self, payment_id: int, reason: str = "Saga compensation"):
+        db: Session = SessionLocal()
+        try:
+            # ⚠️  TODO: À implémenter par les étudiants
+            
+            # Exemple de solution :
+            # payment = db.query(Payment).filter(Payment.id == payment_id).first()
+            # if not payment:
+            #     raise ValueError(f"Payment {payment_id} not found")
+            # 
+            # if payment.status == 'refunded':
+            #     self.logger.info(f"Payment {payment_id} already refunded")
+            #     return
+            # 
+            # if payment.status != 'completed':
+            #     raise ValueError(f"Cannot refund payment in status {payment.status}")
+            # 
+            # # Mettre à jour le statut
+            # payment.status = 'refunding'
+            # db.commit()
+            # 
+            # # Simuler le processus de remboursement
+            # if self.process_refund(payment, reason):
+            #     payment.status = 'refunded'
+            # else:
+            #     payment.status = 'refund_failed'
+            # 
+            # # Enregistrer la raison
+            # metadata = json.loads(payment.metadata) if payment.metadata else {}
+            # metadata['refund_reason'] = reason
+            # metadata['refunded_at'] = datetime.now().isoformat()
+            # payment.metadata = json.dumps(metadata)
+            # 
+            # db.commit()
+            # self.logger.info(f"✅ Payment {payment_id} compensated")
+            
+            pass  # Placeholder - à remplacer
+            
+        except Exception as e:
+            self.logger.error(f"Failed to compensate payment {payment_id}: {e}")
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    
+    # =========================================================================
+    # TODO-SAGA8: Implémentez la vérification de l'état de compensation
+    # =========================================================================
+    """
+    Cette méthode doit vérifier si un paiement peut être remboursé
+    
+    Critères :
+    1. Le paiement existe
+    2. Le statut est 'completed' (pas déjà remboursé)
+    3. Le paiement n'est pas trop ancien (ex: moins de 30 jours)
+    4. Le montant est supérieur à 0
+    
+    @param payment_id: ID du paiement
+    @returns: True si le remboursement est possible
+    """
+    def can_compensate_payment(self, payment_id: int) -> bool:
+        # ⚠️  TODO: À implémenter par les étudiants
+        
+        # Exemple de solution :
+        # db: Session = SessionLocal()
+        # try:
+        #     payment = db.query(Payment).filter(Payment.id == payment_id).first()
+        #     if not payment:
+        #         return False
+        #     
+        #     if payment.status != 'completed':
+        #         return False
+        #     
+        #     # Vérifier l'âge du paiement (30 jours max)
+        #     if payment.completed_at:
+        #         days_since_payment = (datetime.now() - payment.completed_at).days
+        #         if days_since_payment > 30:
+        #             return False
+        #     
+        #     # Vérifier le montant
+        #     if float(payment.amount) <= 0:
+        #         return False
+        #     
+        #     return True
+        #     
+        # except Exception as e:
+        #     self.logger.error(f"Error checking compensation eligibility: {e}")
+        #     return False
+        # finally:
+        #     db.close()
+        
+        return False  # Placeholder - à remplacer
+    
+    def process_refund(self, payment: Payment, reason: str):
+        """Simulate refund processing with external payment provider"""
+        try:
+            # En production, ici on appellerait l'API du provider de paiement
+            # Pour la simulation, on marque comme remboursé
+            
+            payment.status = 'refunded'
+            payment.metadata = f"Refunded: {reason}"
+            
+            self.logger.info(f"Refund processed for payment {payment.id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Refund processing failed for payment {payment.id}: {e}")
+            return False
+
+compensation_service = PaymentCompensationService()
+EOF
+
     # API Flask
     cat > app.py << 'EOF'
 from flask import Flask, request, jsonify
@@ -1679,6 +2411,7 @@ import logging
 from datetime import datetime
 from config import engine, Base
 from services.payment_service import payment_service
+from compensations.payment_compensation import compensation_service
 
 app = Flask(__name__)
 CORS(app)
@@ -1697,9 +2430,10 @@ def health_check():
         'version': '1.0.0',
         'status': 'healthy',
         'database': 'PostgreSQL (transactions) + Redis (cache)',
-        'patterns': ['Polyglot Persistence', 'Cache-Aside'],
+        'patterns': ['Polyglot Persistence', 'Cache-Aside', 'Saga Compensation'],
         'endpoints': {
             'payments': '/api/payments',
+            'compensations': '/api/payments/:id/compensate',
             'health': '/health'
         }
     })
@@ -1784,6 +2518,33 @@ def update_payment_status(payment_id):
             'message': str(e)
         }), 500
 
+@app.route('/api/payments/<int:payment_id>/compensate', methods=['POST'])
+def compensate_payment(payment_id):
+    try:
+        data = request.get_json()
+        reason = data.get('reason', 'Saga compensation')
+        
+        # Vérifier l'éligibilité
+        if not compensation_service.can_compensate_payment(payment_id):
+            return jsonify({
+                'error': 'Payment cannot be compensated',
+                'message': 'Payment is not eligible for refund'
+            }), 400
+        
+        compensation_service.compensate_payment(payment_id, reason)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Payment {payment_id} compensated successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error compensating payment {payment_id}: {e}")
+        return jsonify({
+            'error': 'Failed to compensate payment',
+            'message': str(e)
+        }), 500
+
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({'error': 'Not found'}), 404
@@ -1817,7 +2578,7 @@ CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]
 EOF
 
     cd ../..
-    echo "✅ Service Paiements créé (PostgreSQL + Redis + Polyglot Persistence)"
+    echo "✅ Service Paiements créé avec TODOs Polyglot et Saga"
 }
 
 # =============================================================================
@@ -2384,7 +3145,7 @@ create_event_store_service() {
     cd tp4-microservices-persistence/event-store-service
     
     # Créer les répertoires nécessaires
-    mkdir -p src/{controllers,services,models,config,utils}
+    mkdir -p src/{controllers,services,models,config,utils,sync}
     
     # package.json
     cat > package.json << 'EOF'
@@ -2407,7 +3168,8 @@ create_event_store_service() {
     "dotenv": "^16.3.1",
     "uuid": "^9.0.1",
     "joi": "^17.11.0",
-    "amqplib": "^0.10.3"
+    "amqplib": "^0.10.3",
+    "axios": "^1.6.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
@@ -2822,10 +3584,500 @@ class EventStoreService {
 module.exports = new EventStoreService();
 EOF
 
+    # Service de synchronisation (TODO-SYNC1, TODO-SYNC2, TODO-SYNC3)
+    cat > src/sync/data.sync.service.js << 'EOF'
+const EventEmitter = require('events');
+const mongoose = require('mongoose');
+const axios = require('axios');
+
+// Schéma pour les données d'événements répliquées
+const replicatedEventSchema = new mongoose.Schema({
+  originalEventId: { type: Number, required: true, unique: true },
+  name: { type: String, required: true },
+  description: String,
+  eventDate: Date,
+  location: String,
+  totalCapacity: Number,
+  currentBookedSeats: { type: Number, default: 0 },
+  ticketPrice: Number,
+  category: String,
+  status: { type: String, default: 'active' },
+  lastSyncedAt: { type: Date, default: Date.now },
+  version: { type: Number, default: 1 }
+}, {
+  collection: 'replicated_events'
+});
+
+const ReplicatedEvent = mongoose.model('ReplicatedEvent', replicatedEventSchema);
+
+class DataSyncService extends EventEmitter {
+  constructor() {
+    super();
+    this.syncInProgress = new Set();
+  }
+
+  // =========================================================================
+  // TODO-SYNC1: Implémentez la synchronisation initiale des événements
+  // =========================================================================
+  /**
+   * Cette méthode doit récupérer tous les événements et les répliquer localement
+   * 
+   * Étapes :
+   * 1. Récupérer tous les événements du service Events via API
+   * 2. Pour chaque événement, créer ou mettre à jour la réplique locale
+   * 3. Marquer la date de synchronisation
+   * 4. Émettre un événement de synchronisation complète
+   * 5. Gérer les erreurs individuelles sans arrêter le processus
+   */
+  async performInitialSync() {
+    try {
+      console.log('Starting initial data synchronization...');
+      
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // // 1. Récupérer tous les événements
+      // const events = await this.fetchEventsFromService();
+      // 
+      // let syncedCount = 0;
+      // let errorCount = 0;
+      // 
+      // // 2. Traiter chaque événement
+      // for (const event of events) {
+      //   try {
+      //     await this.createOrUpdateReplica(event);
+      //     syncedCount++;
+      //   } catch (error) {
+      //     console.error(`Failed to sync event ${event.id}:`, error);
+      //     errorCount++;
+      //   }
+      // }
+      // 
+      // // 3. Émettre l'événement de synchronisation complète
+      // this.emit('initialSyncCompleted', {
+      //   totalEvents: events.length,
+      //   syncedCount,
+      //   errorCount,
+      //   completedAt: new Date()
+      // });
+      // 
+      // console.log(`Initial sync completed: ${syncedCount} events synced, ${errorCount} errors`);
+      // 
+      // return {
+      //   success: true,
+      //   syncedCount,
+      //   errorCount
+      // };
+      
+    } catch (error) {
+      console.error('Initial sync failed:', error);
+      this.emit('syncError', error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-SYNC2: Implémentez la synchronisation incrémentale
+  // =========================================================================
+  /**
+   * Cette méthode doit synchroniser seulement les événements modifiés
+   * 
+   * Étapes :
+   * 1. Déterminer la date de dernière synchronisation
+   * 2. Récupérer les événements modifiés depuis cette date
+   * 3. Mettre à jour les répliques concernées
+   * 4. Gérer les conflits de version si nécessaire
+   * 5. Mettre à jour lastSyncedAt pour chaque réplique
+   */
+  async performIncrementalSync() {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // // 1. Déterminer la date de dernière synchronisation
+      // const lastSyncDate = await this.getLastSyncDate();
+      // 
+      // if (!lastSyncDate) {
+      //   console.log('No previous sync found, performing initial sync');
+      //   return this.performInitialSync();
+      // }
+      // 
+      // console.log(`Starting incremental sync from ${lastSyncDate.toISOString()}`);
+      // 
+      // // 2. Récupérer les événements modifiés
+      // const modifiedEvents = await this.fetchEventsFromService(lastSyncDate);
+      // 
+      // let updatedCount = 0;
+      // let conflictCount = 0;
+      // 
+      // // 3. Traiter chaque événement modifié
+      // for (const event of modifiedEvents) {
+      //   try {
+      //     const existingReplica = await ReplicatedEvent.findOne({ 
+      //       originalEventId: event.id 
+      //     });
+      //     
+      //     // Vérifier la version pour éviter les régressions
+      //     if (existingReplica && event.version < existingReplica.version) {
+      //       console.warn(`Skipping event ${event.id}: remote version ${event.version} < local version ${existingReplica.version}`);
+      //       conflictCount++;
+      //       continue;
+      //     }
+      //     
+      //     await this.createOrUpdateReplica(event);
+      //     updatedCount++;
+      //     
+      //   } catch (error) {
+      //     console.error(`Failed to sync modified event ${event.id}:`, error);
+      //   }
+      // }
+      // 
+      // this.emit('incrementalSyncCompleted', {
+      //   modifiedEvents: modifiedEvents.length,
+      //   updatedCount,
+      //   conflictCount,
+      //   lastSyncDate
+      // });
+      // 
+      // return {
+      //   success: true,
+      //   updatedCount,
+      //   conflictCount
+      // };
+      
+    } catch (error) {
+      console.error('Incremental sync failed:', error);
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // TODO-SYNC3: Implémentez la gestion des événements de mise à jour en temps réel
+  // =========================================================================
+  /**
+   * Cette méthode doit écouter les événements et mettre à jour les répliques
+   * 
+   * Étapes :
+   * 1. Parser le message d'événement reçu
+   * 2. Trouver la réplique correspondante
+   * 3. Appliquer la mise à jour si la version est plus récente
+   * 4. Résoudre les conflits selon une stratégie définie
+   * 5. Émettre un événement de mise à jour réussie/échouée
+   */
+  async handleEventUpdated(eventUpdateMessage) {
+    try {
+      // ⚠️  TODO: À implémenter par les étudiants
+      
+      // Exemple de solution :
+      // // 1. Parser le message
+      // const { eventId, eventData, version, timestamp } = eventUpdateMessage;
+      // 
+      // console.log(`📡 Received update for event ${eventId} v${version}`);
+      // 
+      // // 2. Trouver la réplique
+      // const replica = await ReplicatedEvent.findOne({ 
+      //   originalEventId: eventId 
+      // });
+      // 
+      // if (!replica) {
+      //   console.log(`Creating new replica for event ${eventId}`);
+      //   await this.createOrUpdateReplica(eventData);
+      //   return;
+      // }
+      // 
+      // // 3. Vérifier la version
+      // if (version <= replica.version) {
+      //   console.log(`Skipping update: version ${version} <= current ${replica.version}`);
+      //   return;
+      // }
+      // 
+      // // 4. Appliquer la mise à jour
+      // await this.createOrUpdateReplica(eventData);
+      // 
+      // this.emit('realtimeUpdateCompleted', {
+      //   eventId,
+      //   version,
+      //   timestamp
+      // });
+      
+    } catch (error) {
+      console.error('Real-time event update failed:', error);
+      this.emit('realtimeUpdateFailed', { error: error.message });
+      throw error;
+    }
+  }
+
+  // Méthodes utilitaires
+  async fetchEventsFromService(lastSyncDate = null) {
+    const eventsServiceUrl = process.env.EVENTS_SERVICE_URL || 'http://localhost:8080';
+    const url = lastSyncDate 
+      ? `${eventsServiceUrl}/api/events?modifiedSince=${lastSyncDate.toISOString()}`
+      : `${eventsServiceUrl}/api/events`;
+    
+    const response = await axios.get(url);
+    return response.data;
+  }
+
+  async getLastSyncDate() {
+    const lastSynced = await ReplicatedEvent.findOne()
+      .sort({ lastSyncedAt: -1 })
+      .select('lastSyncedAt');
+    
+    return lastSynced ? lastSynced.lastSyncedAt : null;
+  }
+
+  async createOrUpdateReplica(eventData) {
+    const replica = await ReplicatedEvent.findOneAndUpdate(
+      { originalEventId: eventData.id },
+      {
+        name: eventData.name,
+        description: eventData.description,
+        eventDate: new Date(eventData.eventDate),
+        location: eventData.location,
+        totalCapacity: eventData.totalCapacity,
+        currentBookedSeats: eventData.bookedSeats || 0,
+        ticketPrice: eventData.ticketPrice,
+        category: eventData.category?.name,
+        status: eventData.status || 'active',
+        lastSyncedAt: new Date(),
+        version: eventData.version || 1
+      },
+      { 
+        upsert: true, 
+        new: true, 
+        setDefaultsOnInsert: true 
+      }
+    );
+
+    return replica;
+  }
+}
+
+module.exports = { DataSyncService, ReplicatedEvent };
+EOF
+
+    # Service de résolution de conflits (TODO-CONFLICT1, TODO-CONFLICT2, TODO-CONFLICT3)
+    cat > src/sync/conflict.resolution.js << 'EOF'
+class ConflictResolutionService {
+  
+  // =========================================================================
+  // TODO-CONFLICT1: Implémentez la détection de conflits de version
+  // =========================================================================
+  /**
+   * Cette méthode doit détecter les conflits entre versions locales et distantes
+   * 
+   * Critères de détection :
+   * 1. Comparer les numéros de version
+   * 2. Comparer les timestamps de modification
+   * 3. Identifier le type de conflit :
+   *    - CONCURRENT_UPDATE: modifications simultanées
+   *    - STALE_UPDATE: mise à jour sur une version obsolète
+   *    - VERSION_MISMATCH: incohérence de version
+   * 4. Retourner un objet décrivant le conflit
+   * 
+   * @param {Object} localData - Données locales
+   * @param {Object} remoteData - Données distantes
+   * @returns {Object} Information sur le conflit détecté
+   */
+  detectVersionConflict(localData, remoteData) {
+    // ⚠️  TODO: À implémenter par les étudiants
+    
+    // Exemple de solution :
+    // if (!localData || !remoteData) {
+    //   return { hasConflict: false };
+    // }
+    // 
+    // const conflict = {
+    //   hasConflict: false,
+    //   type: null,
+    //   details: {}
+    // };
+    // 
+    // // Comparer les versions
+    // if (localData.version === remoteData.version && 
+    //     localData.lastModified !== remoteData.lastModified) {
+    //   conflict.hasConflict = true;
+    //   conflict.type = 'CONCURRENT_UPDATE';
+    //   conflict.details = {
+    //     localVersion: localData.version,
+    //     remoteVersion: remoteData.version,
+    //     localModified: localData.lastModified,
+    //     remoteModified: remoteData.lastModified
+    //   };
+    // } else if (remoteData.version < localData.version) {
+    //   conflict.hasConflict = true;
+    //   conflict.type = 'STALE_UPDATE';
+    //   conflict.details = {
+    //     message: 'Remote update is based on older version'
+    //   };
+    // }
+    // 
+    // return conflict;
+    
+    return { hasConflict: false }; // Placeholder - à remplacer
+  }
+
+  // =========================================================================
+  // TODO-CONFLICT2: Implémentez la stratégie "Last Writer Wins"
+  // =========================================================================
+  /**
+   * Cette stratégie résout les conflits en favorisant la dernière écriture
+   * 
+   * Logique :
+   * 1. Comparer les timestamps de dernière modification
+   * 2. Sélectionner les données avec le timestamp le plus récent
+   * 3. Préserver certains champs critiques si nécessaire
+   * 4. Retourner les données fusionnées
+   * 
+   * @param {Object} localData - Données locales
+   * @param {Object} remoteData - Données distantes
+   * @returns {Object} Données résolues selon Last Writer Wins
+   */
+  resolveConflictLastWriterWins(localData, remoteData) {
+    // ⚠️  TODO: À implémenter par les étudiants
+    
+    // Exemple de solution :
+    // if (!localData) return remoteData;
+    // if (!remoteData) return localData;
+    // 
+    // const localTime = new Date(localData.lastModified || 0).getTime();
+    // const remoteTime = new Date(remoteData.lastModified || 0).getTime();
+    // 
+    // // Sélectionner les données les plus récentes
+    // const winner = localTime > remoteTime ? localData : remoteData;
+    // 
+    // // Optionnel : préserver certains champs critiques
+    // const resolved = {
+    //   ...winner,
+    //   _conflictResolution: {
+    //     strategy: 'LAST_WRITER_WINS',
+    //     resolvedAt: new Date(),
+    //     localTimestamp: localTime,
+    //     remoteTimestamp: remoteTime,
+    //     winner: localTime > remoteTime ? 'local' : 'remote'
+    //   }
+    // };
+    // 
+    // return resolved;
+    
+    return localData; // Placeholder - à remplacer
+  }
+
+  // =========================================================================
+  // TODO-CONFLICT3: Implémentez la stratégie de merge intelligent
+  // =========================================================================
+  /**
+   * Cette stratégie tente de fusionner les modifications non conflictuelles
+   * 
+   * Logique :
+   * 1. Identifier les champs modifiés dans chaque version
+   * 2. Pour les champs modifiés dans une seule version, prendre cette valeur
+   * 3. Pour les champs modifiés dans les deux versions :
+   *    - Si valeurs identiques, pas de conflit
+   *    - Si valeurs différentes, appliquer une règle (ex: max, concat, etc.)
+   * 4. Construire l'objet fusionné
+   * 5. Marquer les champs en conflit pour revue manuelle si nécessaire
+   * 
+   * @param {Object} localData - Données locales
+   * @param {Object} remoteData - Données distantes
+   * @returns {Object} Données fusionnées intelligemment
+   */
+  resolveConflictIntelligentMerge(localData, remoteData) {
+    // ⚠️  TODO: À implémenter par les étudiants
+    
+    // Exemple de solution :
+    // if (!localData) return remoteData;
+    // if (!remoteData) return localData;
+    // 
+    // const merged = {};
+    // const conflicts = [];
+    // 
+    // // Obtenir tous les champs uniques
+    // const allFields = new Set([
+    //   ...Object.keys(localData),
+    //   ...Object.keys(remoteData)
+    // ]);
+    // 
+    // for (const field of allFields) {
+    //   const localValue = localData[field];
+    //   const remoteValue = remoteData[field];
+    //   
+    //   if (localValue === remoteValue) {
+    //     // Pas de conflit
+    //     merged[field] = localValue;
+    //   } else if (localValue === undefined) {
+    //     // Nouveau champ dans remote
+    //     merged[field] = remoteValue;
+    //   } else if (remoteValue === undefined) {
+    //     // Champ supprimé dans remote
+    //     merged[field] = localValue;
+    //   } else {
+    //     // Conflit réel - appliquer une stratégie
+    //     if (field === 'bookedSeats' || field === 'totalRevenue') {
+    //       // Pour les compteurs, prendre le maximum
+    //       merged[field] = Math.max(localValue, remoteValue);
+    //     } else if (field === 'lastModified') {
+    //       // Pour les timestamps, prendre le plus récent
+    //       merged[field] = new Date(localValue) > new Date(remoteValue) ? localValue : remoteValue;
+    //     } else {
+    //       // Pour les autres, marquer le conflit
+    //       conflicts.push({
+    //         field,
+    //         localValue,
+    //         remoteValue
+    //       });
+    //       merged[field] = remoteValue; // Favoriser remote par défaut
+    //     }
+    //   }
+    // }
+    // 
+    // if (conflicts.length > 0) {
+    //   merged._conflicts = conflicts;
+    // }
+    // 
+    // merged._conflictResolution = {
+    //   strategy: 'INTELLIGENT_MERGE',
+    //   resolvedAt: new Date(),
+    //   conflictCount: conflicts.length
+    // };
+    // 
+    // return merged;
+    
+    return localData; // Placeholder - à remplacer
+  }
+
+  // Stratégies de résolution disponibles
+  getResolutionStrategies() {
+    return {
+      LAST_WRITER_WINS: this.resolveConflictLastWriterWins.bind(this),
+      INTELLIGENT_MERGE: this.resolveConflictIntelligentMerge.bind(this),
+      MANUAL_RESOLUTION: this.flagForManualResolution.bind(this)
+    };
+  }
+
+  flagForManualResolution(localData, remoteData) {
+    // Marquer pour résolution manuelle
+    return {
+      requiresManualResolution: true,
+      localData,
+      remoteData,
+      timestamp: new Date()
+    };
+  }
+}
+
+module.exports = ConflictResolutionService;
+EOF
+
     # Contrôleur principal
     cat > src/controllers/event.store.controller.js << 'EOF'
 const eventStoreService = require('../services/event.store.service');
+const { DataSyncService } = require('../sync/data.sync.service');
+const ConflictResolutionService = require('../sync/conflict.resolution');
 const Joi = require('joi');
+
+const dataSyncService = new DataSyncService();
+const conflictResolver = new ConflictResolutionService();
 
 const appendEventSchema = Joi.object({
   aggregateId: Joi.string().required(),
@@ -3014,6 +4266,98 @@ class EventStoreController {
       });
     }
   }
+
+  // Endpoints de synchronisation
+  async performSync(req, res) {
+    try {
+      const { type = 'incremental' } = req.body;
+      
+      let result;
+      if (type === 'initial') {
+        result = await dataSyncService.performInitialSync();
+      } else {
+        result = await dataSyncService.performIncrementalSync();
+      }
+      
+      res.json({
+        success: true,
+        syncType: type,
+        result
+      });
+      
+    } catch (error) {
+      console.error('❌ Error performing sync:', error);
+      res.status(500).json({ 
+        error: 'Failed to perform sync', 
+        message: error.message 
+      });
+    }
+  }
+
+  async handleRealtimeUpdate(req, res) {
+    try {
+      const updateMessage = req.body;
+      await dataSyncService.handleEventUpdated(updateMessage);
+      
+      res.json({
+        success: true,
+        message: 'Realtime update processed'
+      });
+      
+    } catch (error) {
+      console.error('❌ Error handling realtime update:', error);
+      res.status(500).json({ 
+        error: 'Failed to process realtime update', 
+        message: error.message 
+      });
+    }
+  }
+
+  async resolveConflict(req, res) {
+    try {
+      const { localData, remoteData, strategy = 'LAST_WRITER_WINS' } = req.body;
+      
+      // Détecter le conflit
+      const conflict = conflictResolver.detectVersionConflict(localData, remoteData);
+      
+      if (!conflict.hasConflict) {
+        return res.json({
+          hasConflict: false,
+          message: 'No conflict detected'
+        });
+      }
+      
+      // Résoudre selon la stratégie
+      const strategies = conflictResolver.getResolutionStrategies();
+      const resolveFunction = strategies[strategy];
+      
+      if (!resolveFunction) {
+        return res.status(400).json({
+          error: 'Invalid resolution strategy',
+          availableStrategies: Object.keys(strategies)
+        });
+      }
+      
+      const resolved = resolveFunction(localData, remoteData);
+      
+      res.json({
+        hasConflict: true,
+        conflictType: conflict.type,
+        conflictDetails: conflict.details,
+        resolution: {
+          strategy,
+          resolvedData: resolved
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error resolving conflict:', error);
+      res.status(500).json({ 
+        error: 'Failed to resolve conflict', 
+        message: error.message 
+      });
+    }
+  }
 }
 
 module.exports = new EventStoreController();
@@ -3049,16 +4393,20 @@ app.get('/', (req, res) => {
     message: '📚 Event Store Service API - Event Sourcing + CQRS',
     version: '1.0.0',
     database: 'MongoDB',
-    patterns: ['Event Sourcing', 'CQRS', 'Immutable Event Log'],
+    patterns: ['Event Sourcing', 'CQRS', 'Immutable Event Log', 'Data Synchronization', 'Conflict Resolution'],
     capabilities: [
       'Immutable event storage',
       'Aggregate reconstruction',
       'Time travel queries',
-      'Complete audit trail'
+      'Complete audit trail',
+      'Data synchronization',
+      'Conflict resolution'
     ],
     endpoints: {
       events: '/api/events',
       aggregates: '/api/aggregates',
+      sync: '/api/sync',
+      conflicts: '/api/conflicts',
       metrics: '/api/metrics',
       health: '/health'
     }
@@ -3082,6 +4430,13 @@ app.get('/api/aggregates/:aggregateId/history', eventStoreController.getAggregat
 app.get('/api/aggregates/:aggregateId/reconstruct', eventStoreController.reconstructAggregateState);
 app.get('/api/metrics', eventStoreController.getMetrics);
 
+// Routes de synchronisation
+app.post('/api/sync', eventStoreController.performSync);
+app.post('/api/sync/realtime', eventStoreController.handleRealtimeUpdate);
+
+// Routes de résolution de conflits
+app.post('/api/conflicts/resolve', eventStoreController.resolveConflict);
+
 // Gestionnaire d'erreurs global
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -3101,7 +4456,7 @@ app.use('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Event Store Service running on port ${PORT}`);
-  console.log(`📚 Providing Event Sourcing and CQRS capabilities`);
+  console.log(`📚 Providing Event Sourcing, CQRS, Sync and Conflict Resolution capabilities`);
 });
 
 module.exports = app;
@@ -3128,7 +4483,7 @@ CMD ["npm", "start"]
 EOF
 
     cd ../..
-    echo "✅ Service Event Store créé"
+    echo "✅ Service Event Store créé avec tous les TODOs"
 }
 
 # =============================================================================
@@ -3450,7 +4805,7 @@ class SagaOrchestrator extends EventEmitter {
       console.log(`🔄 Compensating reservation ${reservationId} for Saga ${sagaId}`);
       
       await axios.post(
-        `${this.serviceEndpoints.reservations}/api/reservations/${reservationId}/cancel`,
+        `${this.serviceEndpoints.reservations}/api/reservations/${reservationId}/compensate`,
         { reason: 'Saga compensation' }
       );
       
@@ -3466,9 +4821,9 @@ class SagaOrchestrator extends EventEmitter {
     try {
       console.log(`🔄 Compensating payment ${paymentId} for Saga ${sagaId}`);
       
-      await axios.put(
-        `${this.serviceEndpoints.payments}/api/payments/${paymentId}/status`,
-        { status: 'refunded', metadata: { reason: 'Saga compensation' } }
+      await axios.post(
+        `${this.serviceEndpoints.payments}/api/payments/${paymentId}/compensate`,
+        { reason: 'Saga compensation' }
       );
       
       await this.recordSagaStep(sagaId, 'PAYMENT_COMPENSATED', { paymentId });
@@ -4328,6 +5683,7 @@ services:
       - "3001:3001"
     environment:
       MONGODB_URI: mongodb://mongo-event-store:27017/event_store_db
+      EVENTS_SERVICE_URL: http://event-service:8080
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
     depends_on:
@@ -4370,7 +5726,8 @@ services:
     ports:
       - "5001:5001"
     environment:
-      MONGODB_URI: mongodb://mongo-notifications:27017/notifications_db
+      MONGODB_URI: mongodb://mongo-notifications:27017/
+      MONGODB_DB: notifications_db
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
     depends_on:
@@ -4542,6 +5899,7 @@ create_main_readme() {
     cd tp4-microservices-persistence
     
     cat > README.md << 'EOF'
+
 # 🏗️ TP4 - PERSISTANCE DANS LES MICROSERVICES
 
 ## 🎯 Vue d'ensemble
@@ -4569,7 +5927,6 @@ Cette architecture implémente une plateforme complète de gestion d'événement
 ```bash
 cd scripts
 ./start-dev.sh
-```
 
 ### 2. Compléter les TODOs
 

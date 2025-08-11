@@ -1,0 +1,17 @@
+spring:
+  elasticsearch:
+    uris: http://${ELASTICSEARCH_HOST:localhost}:${ELASTICSEARCH_PORT:9200}
+    
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.fst.dmi.analyticsservice: DEBUG
+    org.springframework.data.elasticsearch: DEBUG

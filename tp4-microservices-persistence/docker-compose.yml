@@ -1,0 +1,322 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # BASES DE DONNÉES
+  # =============================================================================
+  
+  # PostgreSQL pour événements
+  postgres-events:
+    image: postgres:16-alpine
+    container_name: postgres-events
+    environment:
+      POSTGRES_DB: events_db
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-events-data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U events_user -d events_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL pour paiements
+  postgres-payments:
+    image: postgres:16-alpine
+    container_name: postgres-payments
+    environment:
+      POSTGRES_DB: payments_db
+      POSTGRES_USER: payments_user
+      POSTGRES_PASSWORD: payments_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-payments-data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments_user -d payments_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB pour réservations
+  mongo-reservations:
+    image: mongo:7.0
+    container_name: mongo-reservations
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-reservations-data:/data/db
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB pour event store
+  mongo-event-store:
+    image: mongo:7.0
+    container_name: mongo-event-store
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo-event-store-data:/data/db
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB pour notifications
+  mongo-notifications:
+    image: mongo:7.0
+    container_name: mongo-notifications
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo-notifications-data:/data/db
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis pour cache
+  redis-cache:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch pour analytics
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ pour messaging
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================================================
+  # MICROSERVICES
+  # =============================================================================
+
+  # Service Événements
+  event-service:
+    build: ./event-service
+    container_name: event-service
+    ports:
+      - "8080:8080"
+    environment:
+      POSTGRES_HOST: postgres-events
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: events_db
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_password
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      postgres-events:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-network
+
+  # Service Réservations
+  reservation-service:
+    build: ./reservation-service
+    container_name: reservation-service
+    ports:
+      - "3000:3000"
+    environment:
+      MONGODB_URI: mongodb://mongo-reservations:27017/reservations_db
+      EVENT_SERVICE_URL: http://event-service:8080/api/events
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      mongo-reservations:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      event-service:
+        condition: service_started
+    networks:
+      - microservices-network
+
+  # Service Paiements
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    ports:
+      - "5000:5000"
+    environment:
+      POSTGRES_URL: postgresql://payments_user:payments_password@postgres-payments:5432/payments_db
+      REDIS_URL: redis://redis-cache:6379/0
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      postgres-payments:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-network
+
+  # Service Analytics
+  analytics-service:
+    build: ./analytics-service
+    container_name: analytics-service
+    ports:
+      - "8081:8080"
+    environment:
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-network
+
+  # Service Event Store
+  event-store-service:
+    build: ./event-store-service
+    container_name: event-store-service
+    ports:
+      - "3001:3001"
+    environment:
+      MONGODB_URI: mongodb://mongo-event-store:27017/event_store_db
+      EVENTS_SERVICE_URL: http://event-service:8080
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      mongo-event-store:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-network
+
+  # Saga Orchestrator
+  saga-orchestrator:
+    build: ./saga-orchestrator
+    container_name: saga-orchestrator
+    ports:
+      - "3002:3002"
+    environment:
+      EVENTS_SERVICE_URL: http://event-service:8080
+      RESERVATIONS_SERVICE_URL: http://reservation-service:3000
+      PAYMENTS_SERVICE_URL: http://payment-service:5000
+      NOTIFICATIONS_SERVICE_URL: http://notification-service:5001
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      event-service:
+        condition: service_started
+      reservation-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-network
+
+  # Service Notifications
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    ports:
+      - "5001:5001"
+    environment:
+      MONGODB_URI: mongodb://mongo-notifications:27017/
+      MONGODB_DB: notifications_db
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    depends_on:
+      mongo-notifications:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-network
+
+# =============================================================================
+# RÉSEAUX
+# =============================================================================
+
+networks:
+  microservices-network:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+
+volumes:
+  postgres-events-data:
+  postgres-payments-data:
+  mongo-reservations-data:
+  mongo-event-store-data:
+  mongo-notifications-data:
+  redis-data:
+  elasticsearch-data:
+  rabbitmq-data:
